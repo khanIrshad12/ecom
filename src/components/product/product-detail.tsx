@@ -1,0 +1,295 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { convertDriveLink } from "@/lib/utils-drive";
+import { Button } from "@/components/ui/button";
+import { Heart, ShoppingBag, ChevronLeft, ChevronRight, Ruler } from "lucide-react";
+import { toast } from "sonner";
+import Image from "next/image";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useCart } from "@/lib/cart-context";
+
+interface ProductDetailProps {
+    product: any;
+}
+
+export default function ProductDetail({ product }: ProductDetailProps) {
+    const { data: session } = useSession();
+    const router = useRouter();
+    const { addToCart } = useCart();
+    const [selectedImage, setSelectedImage] = useState(0);
+    const [selectedColor, setSelectedColor] = useState(product.variants[0]?.color);
+    const [selectedSize, setSelectedSize] = useState(product.variants[0]?.size);
+    const [isWishlisted, setIsWishlisted] = useState(false);
+    const [wishlistLoading, setWishlistLoading] = useState(false);
+    const [isAddingToCart, setIsAddingToCart] = useState(false);
+
+    useEffect(() => {
+        if (session) {
+            fetchWishlistStatus();
+        }
+    }, [session, product.id]);
+
+    const fetchWishlistStatus = async () => {
+        try {
+            const res = await fetch("/api/wishlist");
+            if (res.ok) {
+                const data = await res.json();
+                setIsWishlisted(data.some((item: any) => item.productId === product.id));
+            }
+        } catch (error) {
+            console.error("Error fetching wishlist:", error);
+        }
+    };
+
+    const toggleWishlist = async () => {
+        if (!session) {
+            toast.error("Please login to save items");
+            router.push(`/login?callbackUrl=/product/${product.slug}`);
+            return;
+        }
+
+        setWishlistLoading(true);
+        try {
+            const res = await fetch("/api/wishlist", {
+                method: "POST",
+                body: JSON.stringify({ productId: product.id }),
+                headers: { "Content-Type": "application/json" },
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setIsWishlisted(data.added);
+                toast.success(data.message);
+            } else {
+                toast.error("Failed to update wishlist");
+            }
+        } catch (error) {
+            toast.error("Something went wrong");
+        } finally {
+            setWishlistLoading(false);
+        }
+    };
+
+    const handleAddToCart = async () => {
+        if (!session) {
+            toast.error("Please login to add to bag");
+            router.push(`/login?callbackUrl=/product/${product.slug}`);
+            return;
+        }
+
+        const variant = product.variants.find((v: any) => v.color === selectedColor && v.size === selectedSize);
+        if (!variant) {
+            toast.error("Selected variant not found");
+            return;
+        }
+
+        setIsAddingToCart(true);
+        try {
+            await addToCart(product.id, variant.id, 1);
+        } finally {
+            setIsAddingToCart(false);
+        }
+    };
+
+    const colors = Array.from(new Set(product.variants.map((v: any) => v.color)));
+
+    // Filter images by selected color
+    const currentColorImages = product.images.filter((img: any) => img.color === selectedColor);
+    // Include images that have no color assigned as "General" images
+    const generalImages = product.images.filter((img: any) => !img.color || img.color === "");
+
+    // Display color-specific images + general images
+    const displayImages = currentColorImages.length > 0 ? [...currentColorImages, ...generalImages] : product.images;
+
+    const sizes = Array.from(new Set(
+        product.variants
+            .filter((v: any) => v.color === selectedColor)
+            .map((v: any) => v.size)
+    ));
+
+    const currentPrice = product.variants.find((v: any) => v.color === selectedColor && v.size === selectedSize)?.price || product.variants[0]?.price;
+
+    const handleColorChange = (color: string) => {
+        setSelectedColor(color);
+        // Reset image selection when color changes
+        setSelectedImage(0);
+        // Auto-select first available size for this color
+        const availableSizes = product.variants.filter((v: any) => v.color === color);
+        if (availableSizes.length > 0) {
+            setSelectedSize(availableSizes[0].size);
+        }
+    };
+
+    return (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-20 font-sans">
+            {/* Breadcrumbs */}
+            <nav className="flex text-xs text-neutral/60 mb-8 space-x-2">
+                <span>Home</span> <span>/</span>
+                <span className="capitalize">{product.category.parentId ? "Wear" : product.category.name}</span> <span>/</span>
+                <span className="font-bold text-primary">{product.name}</span>
+            </nav>
+
+            <div className="flex flex-col lg:flex-row gap-10">
+                {/* Left: Thumbnails */}
+                <div className="hidden lg:flex flex-col gap-3 w-20">
+                    {displayImages.map((img: any, i: number) => (
+                        <button
+                            key={i}
+                            onClick={() => setSelectedImage(i)}
+                            className={`aspect-3/4 border-2 transition overflow-hidden rounded-sm ${selectedImage === i ? "border-primary" : "border-transparent"}`}
+                        >
+                            <Image
+                                width="0"
+                                height="0"
+                                sizes="100vw"
+                                alt={product.name}
+                                src={convertDriveLink(img.driveUrl)}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover"
+                            />
+                        </button>
+                    ))}
+                </div>
+
+                {/* Center: Main Image */}
+                <div className="flex-1 relative group bg-neutral/5 rounded-sm overflow-hidden aspect-3/4">
+                    <Image
+                        className="z-10 w-full h-full object-cover"
+                        src={convertDriveLink(displayImages[selectedImage]?.driveUrl)}
+                        alt={product.name}
+                        referrerPolicy="no-referrer"
+                        width="0"
+                        height="0"
+                        sizes="100vw"
+                    />
+
+                    {/* Navigation Arrows */}
+                    <button
+                        onClick={() => setSelectedImage(prev => (prev > 0 ? prev - 1 : displayImages.length - 1))}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
+                    >
+                        <ChevronLeft className="w-6 h-6" />
+                    </button>
+                    <button
+                        onClick={() => setSelectedImage(prev => (prev < displayImages.length - 1 ? prev + 1 : 0))}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
+                    >
+                        <ChevronRight className="w-6 h-6" />
+                    </button>
+
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[10px] text-secondary/60 bg-white/90 px-3 py-1 rounded-full border border-neutral/10 font-bold uppercase tracking-widest italic">
+                        Premium Quality Assured
+                    </div>
+                </div>
+
+                {/* Right: Product Info */}
+                <div className="lg:w-[450px] space-y-8">
+                    <div className="space-y-3">
+                        <h1 className="text-2xl font-semibold text-primary">{product.name}</h1>
+                        <p className="text-secondary/60 text-sm leading-relaxed">{product.description}</p>
+                    </div>
+
+                    <div className="space-y-1">
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-bold text-primary">MRP ₹{currentPrice}</span>
+                        </div>
+                        <p className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Inclusive of all taxes</p>
+                    </div>
+
+                    {/* Color Selection */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-secondary/80">
+                            <span>Select Color</span>
+                            <span className="text-primary bg-primary/10 px-2 py-0.5 rounded">{selectedColor}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                            {colors.map((color: any) => (
+                                <button
+                                    key={color}
+                                    onClick={() => handleColorChange(color)}
+                                    className={`relative w-10 h-10 rounded-full border-2 p-0.5 transition-all duration-300 hover:scale-110 ${selectedColor === color ? "border-primary scale-110" : "border-neutral/20"}`}
+                                >
+                                    <div
+                                        className="w-full h-full rounded-full shadow-inner border border-black/10"
+                                        style={{ backgroundColor: color.toLowerCase() }}
+                                        title={color}
+                                    />
+                                    {selectedColor === color && (
+                                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-primary text-white rounded-full flex items-center justify-center border-2 border-white">
+                                            <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                                        </div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Size Selection */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-secondary/80">
+                            <span>Select Size</span>
+                            <button className="text-primary hover:underline flex items-center gap-1 group">
+                                <Ruler className="w-3.5 h-3.5" />
+                                Size Chart
+                            </button>
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                            {sizes.map((size: any) => (
+                                <button
+                                    key={size}
+                                    onClick={() => setSelectedSize(size)}
+                                    className={`min-w-12 h-12 px-4 rounded-full border flex items-center justify-center text-sm font-bold transition-all duration-200 ${selectedSize === size ? "border-primary bg-[#1a1a1a] text-white shadow-lg scale-105" : "border-neutral/30 hover:border-primary text-secondary/80"}`}
+                                >
+                                    {size}
+                                </button>
+                            ))}
+                        </div>
+                        {sizes.length === 0 && (
+                            <p className="text-xs text-red-500 font-medium italic">No sizes available for the selected color.</p>
+                        )}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="space-y-3">
+                        <Button
+                            className="w-full h-14 bg-[#1a1a1a] hover:bg-black text-white text-md font-bold rounded-sm gap-3"
+                            onClick={handleAddToCart}
+                            disabled={isAddingToCart}
+                        >
+                            <ShoppingBag className="w-5 h-5" />
+                            {isAddingToCart ? "ADDING..." : "ADD TO BAG"}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            className="w-full h-14 border-neutral/30 text-primary text-md font-bold rounded-sm gap-3 hover:bg-neutral/5 transition-all"
+                            onClick={toggleWishlist}
+                            disabled={wishlistLoading}
+                        >
+                            <Heart className={`w-5 h-5 transition-colors ${isWishlisted ? "fill-red-500 text-red-500" : ""}`} />
+                            {isWishlisted ? "WISHLISTED" : "SAVE TO WISHLIST"}
+                        </Button>
+                    </div>
+
+                    {/* Additional Details */}
+                    <div className="pt-8 space-y-6">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-primary pb-2 border-b border-neutral/10">Product Details</h3>
+                        <div className="grid grid-cols-2 gap-y-4 text-sm">
+                            <div className="text-secondary/60">Primary Color:</div>
+                            <div className="font-medium text-primary uppercase">{selectedColor}</div>
+
+                            <div className="text-secondary/60">Category:</div>
+                            <div className="font-medium text-primary">{product.category.name}</div>
+
+                            <div className="text-secondary/60">Package Contains:</div>
+                            <div className="font-medium text-primary">1 {product.name}</div>
+
+                            <div className="text-secondary/60">Wash Care:</div>
+                            <div className="font-medium text-primary italic">Machine wash warm</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
