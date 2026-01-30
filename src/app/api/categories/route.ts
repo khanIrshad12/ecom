@@ -1,12 +1,47 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+function slugify(input: string) {
+    return input
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, "-")
+        .replace(/[^\w-]+/g, "");
+}
+
+async function ensureUniqueSlug(baseSlug: string) {
+    let slug = baseSlug;
+    let count = 1;
+    // Recursive check for slug collision
+    while (true) {
+        const existing = await prisma.category.findUnique({ where: { slug } });
+        if (!existing) break;
+        slug = `${baseSlug}-${count}`;
+        count++;
+    }
+    return slug;
+}
+
 export async function GET() {
     try {
         const categories = await prisma.category.findMany({
-            include: { subCategories: true },
+            orderBy: [{ level: "asc" }, { displayOrder: "asc" }, { name: "asc" }],
         });
-        return NextResponse.json(categories);
+
+        // Build a stable tree (supports N-depth)
+        const byId = new Map<string, any>();
+        categories.forEach((c: any) => byId.set(c.id, { ...c, children: [] }));
+
+        const roots: any[] = [];
+        byId.forEach((node) => {
+            if (node.parentId && byId.has(node.parentId)) {
+                byId.get(node.parentId).children.push(node);
+            } else {
+                roots.push(node);
+            }
+        });
+
+        return NextResponse.json({ flat: categories, tree: roots });
     } catch (error) {
         return NextResponse.json({ error: "Failed to fetch categories" }, { status: 500 });
     }
@@ -14,37 +49,56 @@ export async function GET() {
 
 export async function POST(req: Request) {
     try {
-        const { name, parentId, imageUrl } = await req.json();
+        const body = await req.json();
+        const {
+            name,
+            parentId,
+            imageUrl,
+            iconUrl,
+            description,
+            displayOrder = 0,
+            showInNav = true,
+            isActive = true,
+            metaTitle,
+            metaDescription,
+        } = body;
 
-        let baseSlug = name.toLowerCase().trim().replace(/ /g, "-").replace(/[^\w-]+/g, "");
-
-        if (parentId) {
-            const parent = await prisma.category.findUnique({
-                where: { id: parentId }
-            });
-            if (parent) {
-                baseSlug = `${parent.slug}-${baseSlug}`;
-            }
+        if (!name || typeof name !== "string" || !name.trim()) {
+            return NextResponse.json({ error: "Category name is required" }, { status: 400 });
         }
 
-        let slug = baseSlug;
-        let count = 1;
+        const parent = parentId
+            ? await prisma.category.findUnique({ where: { id: parentId } })
+            : null;
 
-        // Recursive check for slug collision
-        while (true) {
-            const existing = await prisma.category.findUnique({
-                where: { slug }
-            });
-            if (!existing) break;
-            slug = `${baseSlug}-${count}`;
-            count++;
-        }
+        const baseSlug = slugify(name);
+        const uniqueSlug = await ensureUniqueSlug(baseSlug);
+
+        const path = parent?.path && parent.path !== ""
+            ? `${parent.path}/${uniqueSlug}`
+            : `/${uniqueSlug}`;
+        const level = parent ? (parent.level ?? 0) + 1 : 0;
+        const pathIds = parent ? [...(parent.pathIds ?? []), parent.id] : [];
 
         const category = await prisma.category.create({
             data: {
-                name,
-                slug,
-                parentId: parentId || null,
+                name: name.trim(),
+                slug: uniqueSlug,
+                description: typeof description === "string" ? description : null,
+                imageUrl: typeof imageUrl === "string" ? imageUrl : null,
+                iconUrl: typeof iconUrl === "string" ? iconUrl : null,
+                parentId: parent?.id || null,
+
+                path,
+                level,
+                pathIds,
+
+                displayOrder: Number(displayOrder) || 0,
+                showInNav: Boolean(showInNav),
+                isActive: Boolean(isActive),
+
+                metaTitle: typeof metaTitle === "string" ? metaTitle : null,
+                metaDescription: typeof metaDescription === "string" ? metaDescription : null,
             },
         });
 

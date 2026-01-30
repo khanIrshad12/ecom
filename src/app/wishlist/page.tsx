@@ -104,8 +104,15 @@ export default function WishlistPage() {
                                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                                     />
                                 )}
-                                <div className="absolute top-4 left-4 px-3 py-1 bg-background/90 backdrop-blur-sm rounded-full text-xs font-bold text-primary">
-                                    ₹{item.product.variants[0]?.price || 0}
+                                <div className="absolute top-4 left-4 flex flex-col gap-0.5">
+                                    {(item.product.variants[0] as any)?.actualPrice != null && Number((item.product.variants[0] as any).actualPrice) > Number(item.product.variants[0]?.price) && (
+                                        <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-600 text-[10px] font-bold uppercase">
+                                            {Math.round((1 - Number(item.product.variants[0]?.price) / Number((item.product.variants[0] as any).actualPrice)) * 100)}% off
+                                        </span>
+                                    )}
+                                    <span className="px-3 py-1 bg-background/90 backdrop-blur-sm rounded-full text-xs font-bold text-primary">
+                                        ₹{Math.round(Number(item.product.variants[0]?.price || 0))}
+                                    </span>
                                 </div>
                             </Link>
 

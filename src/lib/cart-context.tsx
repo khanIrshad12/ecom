@@ -19,6 +19,8 @@ interface CartItem {
         color: string;
         size: string;
         price: number;
+        actualPrice?: number | null;
+        stock?: number;
     };
 }
 
@@ -84,21 +86,34 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     };
 
     const updateQuantity = async (itemId: string, quantity: number) => {
+        const previousItems = [...items];
+        if (quantity < 1) {
+            setItems((prev) => prev.filter((i) => i.id !== itemId));
+        } else {
+            setItems((prev) =>
+                prev.map((i) => (i.id === itemId ? { ...i, quantity } : i))
+            );
+        }
         try {
             const res = await fetch("/api/cart", {
                 method: "PATCH",
                 body: JSON.stringify({ itemId, quantity }),
                 headers: { "Content-Type": "application/json" },
             });
-            if (res.ok) {
-                fetchCart();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setItems(previousItems);
+                toast.error(data?.error || "Failed to update quantity");
             }
         } catch (error) {
+            setItems(previousItems);
             toast.error("Failed to update quantity");
         }
     };
 
     const removeFromCart = async (itemId: string) => {
+        const previousItems = [...items];
+        setItems((prev) => prev.filter((i) => i.id !== itemId));
         try {
             const res = await fetch("/api/cart", {
                 method: "DELETE",
@@ -107,15 +122,18 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             });
             if (res.ok) {
                 toast.success("Removed from cart");
-                fetchCart();
+            } else {
+                setItems(previousItems);
+                toast.error("Failed to remove item");
             }
         } catch (error) {
+            setItems(previousItems);
             toast.error("Failed to remove item");
         }
     };
 
     const cartCount = items.reduce((acc, item) => acc + item.quantity, 0);
-    const totalAmount = items.reduce((acc, item) => acc + (item.variant.price * item.quantity), 0);
+    const totalAmount = items.reduce((acc, item) => acc + Math.round(Number(item.variant.price) * item.quantity), 0);
 
     return (
         <CartContext.Provider value={{ items, loading, fetchCart, addToCart, updateQuantity, removeFromCart, cartCount, totalAmount }}>

@@ -108,9 +108,25 @@ export async function PATCH(req: Request) {
             return NextResponse.json({ message: "Item removed from cart" });
         }
 
+        const cartItem = await prisma.cartItem.findUnique({
+            where: { id: itemId },
+            include: { variant: true },
+        });
+        if (!cartItem) {
+            return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
+        }
+
+        const stock = cartItem.variant.stock ?? 0;
+        if (quantity > stock) {
+            return NextResponse.json(
+                { error: `Only ${stock} in stock`, maxQuantity: stock },
+                { status: 400 }
+            );
+        }
+
         await prisma.cartItem.update({
             where: { id: itemId },
-            data: { quantity }
+            data: { quantity },
         });
 
         return NextResponse.json({ message: "Quantity updated" });
