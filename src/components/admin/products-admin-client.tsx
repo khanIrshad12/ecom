@@ -6,12 +6,25 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getDrivePreviewUrl } from "@/lib/utils-drive";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Category = {
   id: string;
   name: string;
   slug: string;
   parentId?: string | null;
+  path?: string;
+  level?: number;
 };
 
 type ProductImage = { driveUrl: string; color?: string | null };
@@ -20,15 +33,18 @@ type ProductVariant = {
   size: string;
   stock: number | string;
   price: number | string;
+  actualPrice?: number | string | null;
 };
 
 type ColorGroup = {
   color: string;
-  driveUrls: string[]; // 3–6 image URLs shared across all sizes of this color
+  driveUrls: string[];
   sizes: Array<{
     size: string;
     stock: number | string;
     price: number | string;
+    actualPrice?: number | string;
+    discountPercent?: number | string;
   }>;
 };
 
@@ -52,7 +68,12 @@ function emptyColorGroup(): ColorGroup {
 }
 
 function emptySizeOption() {
-  return { size: "M", stock: 0, price: 0 };
+  return { size: "M", stock: 0, price: 0, actualPrice: "", discountPercent: "" };
+}
+
+function calcDiscountedPrice(actualPrice: number, discountPercent: number): number {
+  if (discountPercent <= 0) return actualPrice;
+  return Math.round(actualPrice * (1 - discountPercent / 100) * 100) / 100;
 }
 
 export default function ProductsAdminClient() {
@@ -64,9 +85,16 @@ export default function ProductsAdminClient() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
   const [colorGroups, setColorGroups] = useState<ColorGroup[]>([emptyColorGroup()]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
+  const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const editingProduct = useMemo(
     () => (editingId ? products.find((p) => p.id === editingId) : undefined),
     [editingId, products]
@@ -78,7 +106,8 @@ export default function ProductsAdminClient() {
       const [pRes, cRes] = await Promise.all([fetch("/api/products"), fetch("/api/categories")]);
       const [pData, cData] = await Promise.all([pRes.json(), cRes.json()]);
       setProducts(Array.isArray(pData) ? pData : []);
-      setCategories(Array.isArray(cData) ? cData : []);
+      // categories API returns { flat, tree }
+      setCategories(Array.isArray(cData?.flat) ? cData.flat : Array.isArray(cData) ? cData : []);
     } catch {
       toast.error("Failed to load admin data");
       setProducts([]);
@@ -88,12 +117,52 @@ export default function ProductsAdminClient() {
     }
   };
 
+  const leafCategoryIds = useMemo(() => {
+    // leaf = category that is not a parent of any other category
+    const parentIds = new Set(categories.map((c) => c.parentId).filter(Boolean) as string[]);
+    const leafIds = new Set(categories.filter((c) => !parentIds.has(c.id)).map((c) => c.id));
+    return leafIds;
+  }, [categories]);
+
+  const categoriesById = useMemo(() => {
+    const map = new Map<string, Category>();
+    categories.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [categories]);
+
+  const categoryOptions = useMemo(() => {
+    const q = categorySearch.trim().toLowerCase();
+    const sorted = [...categories].sort((a, b) => {
+      const ap = (a.path || `/${a.slug}`).toLowerCase();
+      const bp = (b.path || `/${b.slug}`).toLowerCase();
+      return ap.localeCompare(bp);
+    });
+
+    const filtered = q
+      ? sorted.filter((c) => {
+          const label = `${c.path || `/${c.slug}`} ${c.name}`.toLowerCase();
+          return label.includes(q);
+        })
+      : sorted;
+
+    // Prefer leaf categories first (still allow selecting non-leaf if needed)
+    return filtered.sort((a, b) => {
+      const aLeaf = leafCategoryIds.has(a.id) ? 0 : 1;
+      const bLeaf = leafCategoryIds.has(b.id) ? 0 : 1;
+      if (aLeaf !== bLeaf) return aLeaf - bLeaf;
+      const ap = (a.path || `/${a.slug}`).toLowerCase();
+      const bp = (b.path || `/${b.slug}`).toLowerCase();
+      return ap.localeCompare(bp);
+    });
+  }, [categories, categorySearch, leafCategoryIds]);
+
   useEffect(() => {
     fetchAll();
   }, []);
 
   useEffect(() => {
     if (!editingProduct) return;
+    setFailedPreviews(new Set());
     setName(editingProduct.name || "");
     setDescription(editingProduct.description || "");
     setCategoryId(editingProduct.categoryId || "");
@@ -121,10 +190,18 @@ export default function ProductsAdminClient() {
         }
 
         const group = grouped.get(colorKey)!;
+        const ap = (v as any).actualPrice;
+        const p = v.price;
+        const discountPct =
+          ap != null && Number(ap) > 0 && p != null
+            ? Math.round((1 - Number(p) / Number(ap)) * 100)
+            : "";
         group.sizes.push({
           size: v.size,
           stock: (v as any).stock ?? 0,
           price: v.price,
+          actualPrice: ap ?? "",
+          discountPercent: discountPct,
         });
       });
 
@@ -164,7 +241,9 @@ export default function ProductsAdminClient() {
     setName("");
     setDescription("");
     setCategoryId("");
+    setCategorySearch("");
     setColorGroups([emptyColorGroup()]);
+    setFailedPreviews(new Set());
   };
 
   const validate = () => {
@@ -203,12 +282,21 @@ export default function ProductsAdminClient() {
     try {
       // Flatten color groups back to variants and images
       const variantsPayload: ProductVariant[] = colorGroups.flatMap((group) =>
-        group.sizes.map((size) => ({
-          color: String(group.color).trim(),
-          size: String(size.size).trim(),
-          stock: Number(size.stock || 0),
-          price: Number(size.price),
-        }))
+        group.sizes.map((size) => {
+          const actualPriceNum = size.actualPrice ? Number(size.actualPrice) : null;
+          const discountPctNum = size.discountPercent ? Number(size.discountPercent) : null;
+          let priceNum = Number(size.price);
+          if (actualPriceNum != null && actualPriceNum > 0 && discountPctNum != null && discountPctNum > 0) {
+            priceNum = calcDiscountedPrice(actualPriceNum, discountPctNum);
+          }
+          return {
+            color: String(group.color).trim(),
+            size: String(size.size).trim(),
+            stock: Number(size.stock || 0),
+            price: priceNum,
+            actualPrice: actualPriceNum != null && actualPriceNum > 0 ? actualPriceNum : null,
+          };
+        })
       );
 
       const imagesPayload: ProductImage[] = colorGroups.flatMap((group) =>
@@ -249,25 +337,60 @@ export default function ProductsAdminClient() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this product?")) return;
+  const performDelete = async (id: string) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data?.error || "Failed to delete product");
+        setDeleteConfirmProduct(null);
         return;
       }
       toast.success("Product deleted");
+      setDeleteConfirmProduct(null);
       if (editingId === id) resetForm();
       await fetchAll();
     } catch {
       toast.error("Failed to delete product");
+      setDeleteConfirmProduct(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
   return (
     <div className="space-y-8">
+      <AlertDialog
+        open={!!deleteConfirmProduct}
+        onOpenChange={(open) => !open && setDeleteConfirmProduct(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete product?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteConfirmProduct && (
+                <>
+                  &ldquo;{deleteConfirmProduct.name}&rdquo; will be permanently deleted. This cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteConfirmProduct) performDelete(deleteConfirmProduct.id);
+              }}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-primary">Products</h1>
         <div className="flex gap-2">
@@ -292,6 +415,11 @@ export default function ProductsAdminClient() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="p-category">Category</Label>
+              <Input
+                value={categorySearch}
+                onChange={(e) => setCategorySearch(e.target.value)}
+                placeholder="Search categories (e.g. mens wear / t-shirts / full sleeve)"
+              />
               <select
                 id="p-category"
                 value={categoryId}
@@ -299,11 +427,16 @@ export default function ProductsAdminClient() {
                 className="h-10 w-full rounded-md border border-neutral/20 bg-background px-3 text-sm"
               >
                 <option value="">Select category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+                {categoryOptions.map((c) => {
+                  const base = (c.path || `/${c.slug}`) + " — " + c.name;
+                  const parentLabel = c.parentId ? categoriesById.get(c.parentId)?.name : null;
+                  const suffix = parentLabel ? ` — ${parentLabel}` : leafCategoryIds.has(c.id) ? "" : " (parent)";
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {base + suffix}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -375,47 +508,82 @@ export default function ProductsAdminClient() {
                       </Button>
                     </div>
                     <div className="space-y-2">
-                      {group.driveUrls.map((url, imgIdx) => (
-                        <div key={imgIdx} className="flex gap-2">
-                          <Input
-                            value={url}
-                            onChange={(e) =>
-                              setColorGroups((prev) =>
-                                prev.map((g, i) =>
-                                  i === colorIdx
-                                    ? {
-                                        ...g,
-                                        driveUrls: g.driveUrls.map((u, j) =>
-                                          j === imgIdx ? e.target.value : u
-                                        ),
-                                      }
+                      {group.driveUrls.map((url, imgIdx) => {
+                        const previewKey = `${colorIdx}-${imgIdx}`;
+                        const previewUrl = url.trim();
+                        const failed = failedPreviews.has(previewKey);
+                        return (
+                          <div key={imgIdx} className="flex gap-2 items-center">
+                            <div
+                              className="shrink-0 w-16 h-16 rounded-md border border-neutral/20 bg-muted/50 overflow-hidden flex items-center justify-center"
+                              title={previewUrl ? "Image preview" : "Paste a Drive link"}
+                            >
+                              {!previewUrl ? (
+                                <span className="text-[10px] text-muted-foreground text-center px-1">
+                                  Paste link
+                                </span>
+                              ) : failed ? (
+                                <span className="text-[10px] text-muted-foreground text-center px-1">
+                                  Couldn&apos;t load
+                                </span>
+                              ) : (
+                                <img
+                                  src={getDrivePreviewUrl(previewUrl)}
+                                  alt=""
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                  onError={() =>
+                                    setFailedPreviews((prev) => new Set(prev).add(previewKey))
+                                  }
+                                />
+                              )}
+                            </div>
+                            <Input
+                              value={url}
+                              onChange={(e) => {
+                                setFailedPreviews((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(previewKey);
+                                  return next;
+                                });
+                                setColorGroups((prev) =>
+                                  prev.map((g, i) =>
+                                    i === colorIdx
+                                      ? {
+                                          ...g,
+                                          driveUrls: g.driveUrls.map((u, j) =>
+                                            j === imgIdx ? e.target.value : u
+                                          ),
+                                        }
+                                      : g
+                                  )
+                                );
+                              }}
+                              placeholder="https://drive.google.com/..."
+                              className="flex-1 min-w-0"
+                            />
+                            <Button
+                              variant="outline"
+                              type="button"
+                              disabled={group.driveUrls.length <= 3}
+                              onClick={() =>
+                                setColorGroups((prev) =>
+                                  prev.map((g, i) =>
+                                    i === colorIdx
+                                      ? {
+                                          ...g,
+                                          driveUrls: g.driveUrls.filter((_, j) => j !== imgIdx),
+                                        }
                                     : g
+                                  )
                                 )
-                              )
-                            }
-                            placeholder="https://drive.google.com/..."
-                          />
-                          <Button
-                            variant="outline"
-                            type="button"
-                            disabled={group.driveUrls.length <= 3}
-                            onClick={() =>
-                              setColorGroups((prev) =>
-                                prev.map((g, i) =>
-                                  i === colorIdx
-                                    ? {
-                                        ...g,
-                                        driveUrls: g.driveUrls.filter((_, j) => j !== imgIdx),
-                                      }
-                                    : g
-                                )
-                              )
-                            }
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ))}
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -433,87 +601,118 @@ export default function ProductsAdminClient() {
                       </Button>
                     </div>
                     <div className="space-y-3">
-                      {group.sizes.map((size, sizeIdx) => (
-                        <div
-                          key={sizeIdx}
-                          className="grid grid-cols-1 md:grid-cols-4 gap-3 p-3 bg-background rounded-md border border-neutral/10"
-                        >
-                          <div className="space-y-2">
-                            <Label>Size</Label>
-                            <Input
-                              value={String(size.size)}
-                              onChange={(e) =>
-                                setColorGroups((prev) =>
-                                  prev.map((g, i) =>
-                                    i === colorIdx
-                                      ? {
-                                          ...g,
-                                          sizes: g.sizes.map((s, j) =>
-                                            j === sizeIdx ? { ...s, size: e.target.value } : s
-                                          ),
-                                        }
-                                      : g
-                                  )
-                                )
-                              }
-                              placeholder="M"
-                            />
+                      {group.sizes.map((size, sizeIdx) => {
+                        const actualNum = size.actualPrice ? Number(size.actualPrice) : 0;
+                        const pctNum = size.discountPercent ? Number(size.discountPercent) : 0;
+                        const updateSize = (updates: Partial<typeof size>) =>
+                          setColorGroups((prev) =>
+                            prev.map((g, i) =>
+                              i === colorIdx
+                                ? {
+                                    ...g,
+                                    sizes: g.sizes.map((s, j) =>
+                                      j === sizeIdx ? { ...s, ...updates } : s
+                                    ),
+                                  }
+                                : g
+                            )
+                          );
+                        const onActualOrPctChange = (
+                          newActual?: number | string,
+                          newPct?: number | string
+                        ) => {
+                          const a = newActual !== undefined ? (newActual === "" ? 0 : Number(newActual)) : actualNum;
+                          const p = newPct !== undefined ? (newPct === "" ? 0 : Number(newPct)) : pctNum;
+                          const updates: Partial<typeof size> = {};
+                          if (newActual !== undefined) updates.actualPrice = newActual;
+                          if (newPct !== undefined) updates.discountPercent = newPct;
+                          if (a > 0 && p > 0) {
+                            updates.price = calcDiscountedPrice(a, p);
+                          } else if (newActual !== undefined && a > 0 && Number(size.price) > 0 && Number(size.price) < a) {
+                            updates.discountPercent = Math.round((1 - Number(size.price) / a) * 100);
+                          }
+                          updateSize(updates);
+                        };
+                        const onSellingPriceChange = (newPrice: string) => {
+                          const num = newPrice === "" ? 0 : Number(newPrice);
+                          const updates: Partial<typeof size> = { price: newPrice === "" ? 0 : num };
+                          if (actualNum > 0 && num > 0 && num < actualNum) {
+                            updates.discountPercent = Math.round((1 - num / actualNum) * 100);
+                          } else if (actualNum > 0 && (num >= actualNum || num === 0)) {
+                            updates.discountPercent = "";
+                          }
+                          updateSize(updates);
+                        };
+                        return (
+                          <div
+                            key={sizeIdx}
+                            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 p-3 bg-background rounded-md border border-neutral/10"
+                          >
+                            <div className="space-y-1">
+                              <Label className="text-xs">Size</Label>
+                              <Input
+                                value={String(size.size)}
+                                onChange={(e) => updateSize({ size: e.target.value })}
+                                placeholder="M"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Stock</Label>
+                              <Input
+                                value={String(size.stock)}
+                                onChange={(e) => updateSize({ stock: e.target.value })}
+                                placeholder="0"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Actual (MRP)</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={size.actualPrice === "" || size.actualPrice == null ? "" : size.actualPrice}
+                                onChange={(e) => onActualOrPctChange(e.target.value, undefined)}
+                                placeholder="999"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Discount %</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={size.discountPercent === "" || size.discountPercent == null ? "" : size.discountPercent}
+                                onChange={(e) => onActualOrPctChange(undefined, e.target.value)}
+                                placeholder="20"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Selling price</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={String(size.price)}
+                                onChange={(e) => onSellingPriceChange(e.target.value)}
+                                placeholder="799"
+                                title="Auto-fills Discount % when Actual price is set; or set Discount % to auto-calc this"
+                              />
+                            </div>
+                            <div className="flex items-end">
+                              <Button
+                                variant="outline"
+                                type="button"
+                                disabled={group.sizes.length <= 1}
+                                onClick={() => handleRemoveSizeFromColor(colorIdx, sizeIdx)}
+                                className="w-full"
+                              >
+                                Remove
+                              </Button>
+                            </div>
                           </div>
-                          <div className="space-y-2">
-                            <Label>Stock</Label>
-                            <Input
-                              value={String(size.stock)}
-                              onChange={(e) =>
-                                setColorGroups((prev) =>
-                                  prev.map((g, i) =>
-                                    i === colorIdx
-                                      ? {
-                                          ...g,
-                                          sizes: g.sizes.map((s, j) =>
-                                            j === sizeIdx ? { ...s, stock: e.target.value } : s
-                                          ),
-                                        }
-                                      : g
-                                  )
-                                )
-                              }
-                              placeholder="0"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Price</Label>
-                            <Input
-                              value={String(size.price)}
-                              onChange={(e) =>
-                                setColorGroups((prev) =>
-                                  prev.map((g, i) =>
-                                    i === colorIdx
-                                      ? {
-                                          ...g,
-                                          sizes: g.sizes.map((s, j) =>
-                                            j === sizeIdx ? { ...s, price: e.target.value } : s
-                                          ),
-                                        }
-                                      : g
-                                  )
-                                )
-                              }
-                              placeholder="499"
-                            />
-                          </div>
-                          <div className="flex items-end">
-                            <Button
-                              variant="outline"
-                              type="button"
-                              disabled={group.sizes.length <= 1}
-                              onClick={() => handleRemoveSizeFromColor(colorIdx, sizeIdx)}
-                              className="w-full"
-                            >
-                              Remove Size
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -562,7 +761,12 @@ export default function ProductsAdminClient() {
                       <Button variant="outline" onClick={() => setEditingId(p.id)}>
                         Edit
                       </Button>
-                      <Button variant="destructive" onClick={() => handleDelete(p.id)}>
+                      <Button
+                        variant="destructive"
+                        onClick={() =>
+                          setDeleteConfirmProduct({ id: p.id, name: p.name })
+                        }
+                      >
                         Delete
                       </Button>
                     </div>

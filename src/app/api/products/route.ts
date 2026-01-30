@@ -46,6 +46,7 @@ export async function POST(req: Request) {
                         size: v.size,
                         stock: parseInt(v.stock),
                         price: parseFloat(v.price),
+                        actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? parseFloat(v.actualPrice) : null,
                     })),
                 },
                 images: {

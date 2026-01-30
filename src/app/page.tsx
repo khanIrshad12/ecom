@@ -7,16 +7,36 @@ import { convertDriveLink } from "@/lib/utils-drive";
 import Image from "next/image";
 
 export default async function HomePage() {
-  const [featuredProducts, categories] = await Promise.all([
+  const [featuredProducts, rootCategories, allSubcategories] = await Promise.all([
     prisma.product.findMany({
       take: 8,
       include: { images: true, variants: true, category: true },
       orderBy: { createdAt: "desc" },
     }),
     prisma.category.findMany({
-      where: { parentId: null },
-    })
+      where: { parentId: null, isActive: true, showInNav: true },
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+    }),
+    prisma.category.findMany({
+      where: {
+        parentId: { not: null },
+        isActive: true,
+        showInNav: true,
+      },
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, slug: true, path: true, parentId: true, imageUrl: true, iconUrl: true },
+    }),
   ]);
+
+  const childrenByParentId = new Map<string, typeof allSubcategories>();
+  allSubcategories.forEach((sub: any) => {
+    const pid = sub.parentId;
+    if (pid) {
+      if (!childrenByParentId.has(pid)) childrenByParentId.set(pid, []);
+      childrenByParentId.get(pid)!.push(sub);
+    }
+  });
+  const categories = rootCategories;
 
   return (
     <div className="min-h-screen bg-background">
@@ -60,26 +80,59 @@ export default async function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {categories.map((cat: any) => (
-            <Link
-              key={cat.id}
-              href={`/products?category=${cat.slug}`}
-              className="group relative h-[500px] overflow-hidden bg-neutral/10"
-            >
-              <img
-                src={cat.imageUrl ? convertDriveLink(cat.imageUrl) : "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?q=80&w=2070"}
-                alt={cat.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-              />
-              <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity" />
-              <div className="absolute bottom-8 left-8 space-y-2">
-                <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter">{cat.name}</h3>
-                <div className="h-1 w-0 group-hover:w-full bg-accent transition-all duration-500" />
-                <span className="text-white/60 text-xs font-bold tracking-widest uppercase block pt-2">Shop Now &rarr;</span>
+          {categories.map((cat: any) => {
+            const children = childrenByParentId.get(cat.id) ?? [];
+            const catHref = `/products?categoryId=${encodeURIComponent(cat.id)}`;
+            const catImg = cat.imageUrl ? convertDriveLink(cat.imageUrl) : "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?q=80&w=2070";
+            return (
+              <div key={cat.id} className="space-y-4">
+                <Link
+                  href={catHref}
+                  className="group relative h-[500px] block overflow-hidden bg-neutral/10"
+                >
+                  <img
+                    src={catImg}
+                    alt={cat.name}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  />
+                  <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity" />
+                  <div className="absolute bottom-8 left-8 space-y-2">
+                    <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter">{cat.name}</h3>
+                    <div className="h-1 w-0 group-hover:w-full bg-accent transition-all duration-500" />
+                    <span className="text-white/60 text-xs font-bold tracking-widest uppercase block pt-2">Shop Now &rarr;</span>
+                  </div>
+                </Link>
+                {children.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {children.map((sub: any) => {
+                      const subHref = `/products?categoryId=${encodeURIComponent(sub.id)}`;
+                      const subImg = (sub.imageUrl || sub.iconUrl)
+                        ? convertDriveLink(sub.imageUrl || sub.iconUrl)
+                        : "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?q=80&w=200";
+                      return (
+                        <Link
+                          key={sub.id}
+                          href={subHref}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral/20 bg-background hover:bg-neutral/10 hover:border-primary/30 transition text-sm font-medium text-primary"
+                        >
+                          <span className="shrink-0 w-8 h-8 rounded overflow-hidden border border-neutral/20 bg-muted/50">
+                            <img
+                              src={subImg}
+                              alt=""
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          </span>
+                          <span className="truncate">{sub.name}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -113,9 +166,19 @@ export default async function HomePage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex justify-between items-start">
+                  <div className="flex justify-between items-start gap-2">
                     <h3 className="font-bold text-xl leading-tight">{p.name}</h3>
-                    <span className="text-accent font-black">₹{p.variants[0]?.price || 0}</span>
+                    <div className="flex flex-col items-end shrink-0">
+                      {(p.variants[0] as any)?.actualPrice != null && Number((p.variants[0] as any).actualPrice) > Number(p.variants[0]?.price) && (
+                        <span className="text-background/60 text-sm line-through">₹{Math.round(Number((p.variants[0] as any).actualPrice))}</span>
+                      )}
+                      <span className="text-accent font-black">₹{Math.round(Number(p.variants[0]?.price || 0))}</span>
+                      {(p.variants[0] as any)?.actualPrice != null && Number((p.variants[0] as any).actualPrice) > Number(p.variants[0]?.price) && (
+                        <span className="text-[10px] font-bold text-red-300 uppercase">
+                          {Math.round((1 - Number(p.variants[0]?.price) / Number((p.variants[0] as any).actualPrice)) * 100)}% off
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="text-background/40 text-xs font-bold uppercase tracking-widest">{p.category.name}</p>
                 </div>

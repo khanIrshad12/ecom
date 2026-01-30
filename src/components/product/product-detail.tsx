@@ -83,6 +83,11 @@ export default function ProductDetail({ product }: ProductDetailProps) {
             toast.error("Selected variant not found");
             return;
         }
+        const stock = variant.stock ?? 0;
+        if (stock <= 0) {
+            toast.error("This size is out of stock");
+            return;
+        }
 
         setIsAddingToCart(true);
         try {
@@ -102,23 +107,33 @@ export default function ProductDetail({ product }: ProductDetailProps) {
     // Display color-specific images + general images
     const displayImages = currentColorImages.length > 0 ? [...currentColorImages, ...generalImages] : product.images;
 
-    const sizes = Array.from(new Set(
-        product.variants
-            .filter((v: any) => v.color === selectedColor)
-            .map((v: any) => v.size)
-    ));
+    // Sizes for selected color with stock (variant has stock)
+    const sizeVariants = product.variants.filter((v: any) => v.color === selectedColor);
+    const sizesWithStock = sizeVariants.map((v: any) => ({
+        size: v.size,
+        stock: v.stock ?? 0,
+        variantId: v.id,
+    }));
 
-    const currentPrice = product.variants.find((v: any) => v.color === selectedColor && v.size === selectedSize)?.price || product.variants[0]?.price;
+    const selectedVariant = product.variants.find(
+        (v: any) => v.color === selectedColor && v.size === selectedSize
+    );
+    const selectedStock = selectedVariant?.stock ?? 0;
+    const isSelectedSizeOutOfStock = selectedStock <= 0;
+
+    const currentPrice = selectedVariant?.price ?? product.variants[0]?.price;
+    const actualPrice = selectedVariant?.actualPrice ?? product.variants[0]?.actualPrice;
+    const hasDiscount = actualPrice != null && Number(actualPrice) > 0 && Number(currentPrice) < Number(actualPrice);
+    const discountPercent = hasDiscount
+        ? Math.round((1 - Number(currentPrice) / Number(actualPrice)) * 100)
+        : 0;
 
     const handleColorChange = (color: string) => {
         setSelectedColor(color);
-        // Reset image selection when color changes
         setSelectedImage(0);
-        // Auto-select first available size for this color
-        const availableSizes = product.variants.filter((v: any) => v.color === color);
-        if (availableSizes.length > 0) {
-            setSelectedSize(availableSizes[0].size);
-        }
+        const forColor = product.variants.filter((v: any) => v.color === color);
+        const inStock = forColor.find((v: any) => (v.stock ?? 0) > 0);
+        setSelectedSize(inStock ? inStock.size : forColor[0]?.size ?? selectedSize);
     };
 
     return (
@@ -191,8 +206,18 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                     </div>
 
                     <div className="space-y-1">
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-bold text-primary">MRP ₹{currentPrice}</span>
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                            {hasDiscount && (
+                                <>
+                                    <span className="text-lg text-secondary/70 line-through">₹{Math.round(Number(actualPrice))}</span>
+                                    <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-600 text-xs font-bold uppercase">
+                                        {discountPercent}% off
+                                    </span>
+                                </>
+                            )}
+                            <span className="text-2xl font-bold text-primary">
+                                {hasDiscount ? `₹${Math.round(Number(currentPrice))}` : `MRP ₹${Math.round(Number(currentPrice))}`}
+                            </span>
                         </div>
                         <p className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Inclusive of all taxes</p>
                     </div>
@@ -235,18 +260,36 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                             </button>
                         </div>
                         <div className="flex flex-wrap gap-3">
-                            {sizes.map((size: any) => (
-                                <button
-                                    key={size}
-                                    onClick={() => setSelectedSize(size)}
-                                    className={`min-w-12 h-12 px-4 rounded-full border flex items-center justify-center text-sm font-bold transition-all duration-200 ${selectedSize === size ? "border-primary bg-[#1a1a1a] text-white shadow-lg scale-105" : "border-neutral/30 hover:border-primary text-secondary/80"}`}
-                                >
-                                    {size}
-                                </button>
-                            ))}
+                            {sizesWithStock.map(({ size, stock }) => {
+                                const outOfStock = stock <= 0;
+                                return (
+                                    <button
+                                        key={size}
+                                        type="button"
+                                        onClick={() => !outOfStock && setSelectedSize(size)}
+                                        disabled={outOfStock}
+                                        className={`min-w-12 h-12 px-4 rounded-full border flex flex-col items-center justify-center text-sm font-bold transition-all duration-200 ${
+                                            outOfStock
+                                                ? "border-neutral/20 bg-neutral/5 text-secondary/50 cursor-not-allowed line-through"
+                                                : selectedSize === size
+                                                    ? "border-primary bg-[#1a1a1a] text-white shadow-lg scale-105"
+                                                    : "border-neutral/30 hover:border-primary text-secondary/80"
+                                        }`}
+                                        title={outOfStock ? "Out of stock" : undefined}
+                                    >
+                                        <span>{size}</span>
+                                        {outOfStock && (
+                                            <span className="text-[10px] font-normal normal-case opacity-80">Out of stock</span>
+                                        )}
+                                    </button>
+                                );
+                            })}
                         </div>
-                        {sizes.length === 0 && (
+                        {sizesWithStock.length === 0 && (
                             <p className="text-xs text-red-500 font-medium italic">No sizes available for the selected color.</p>
+                        )}
+                        {isSelectedSizeOutOfStock && selectedSize && (
+                            <p className="text-sm text-amber-600 font-medium">This size is currently out of stock. Choose another size.</p>
                         )}
                     </div>
 
@@ -255,10 +298,10 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                         <Button
                             className="w-full h-14 bg-[#1a1a1a] hover:bg-black text-white text-md font-bold rounded-sm gap-3"
                             onClick={handleAddToCart}
-                            disabled={isAddingToCart}
+                            disabled={isAddingToCart || isSelectedSizeOutOfStock}
                         >
                             <ShoppingBag className="w-5 h-5" />
-                            {isAddingToCart ? "ADDING..." : "ADD TO BAG"}
+                            {isAddingToCart ? "ADDING..." : isSelectedSizeOutOfStock ? "OUT OF STOCK" : "ADD TO BAG"}
                         </Button>
                         <Button
                             variant="outline"

@@ -14,6 +14,19 @@ export async function DELETE(
 
         const { id } = await params;
 
+        // Delete related records first (schema uses onDelete: NoAction)
+        await prisma.cartItem.deleteMany({
+            where: { productId: id },
+        });
+        await prisma.wishlist.deleteMany({
+            where: { productId: id },
+        });
+        await prisma.productVariant.deleteMany({
+            where: { productId: id },
+        });
+        await prisma.productImage.deleteMany({
+            where: { productId: id },
+        });
         await prisma.product.delete({
             where: { id },
         });
@@ -78,6 +91,7 @@ export async function PATCH(
                             size: v.size,
                             stock: parseInt(v.stock),
                             price: parseFloat(v.price),
+                            actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? parseFloat(v.actualPrice) : null,
                         })),
                     },
                 },
