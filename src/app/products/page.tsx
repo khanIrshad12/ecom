@@ -6,17 +6,25 @@ import { Suspense } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Metadata } from "next";
 import Image from "next/image";
+import { Flame } from "lucide-react";
+import { parseProductsSearchParams } from "@/lib/products-search-params";
+import { getProductsAndFacets, type ProductWithRelations, type ProductsFacets } from "@/lib/products-data";
+import { ProductsFiltersSidebar } from "@/components/products/products-filters";
 
 export async function generateMetadata({
     searchParams
 }: {
-    searchParams: Promise<{ category?: string; path?: string; categoryId?: string }>
+    searchParams: Promise<Record<string, string | string[] | undefined>>
 }): Promise<Metadata> {
-    const { category, path, categoryId } = await searchParams;
+    const raw = await searchParams;
+    const { category, path, categoryId, q } = parseProductsSearchParams(raw);
     const { prisma } = await import("@/lib/prisma");
     let title = "All Collections | E-COM";
     let descLabel = "fashion";
-    if (categoryId) {
+    if (q) {
+        title = `"${q}" | Search | E-COM`;
+        descLabel = q;
+    } else if (categoryId) {
         const cat = await prisma.category.findUnique({ where: { id: categoryId }, select: { name: true } });
         title = cat ? `${cat.name} | E-COM` : title;
         descLabel = cat?.name ?? descLabel;
@@ -83,9 +91,12 @@ async function SubcategoryCards({
     if (subcategories.length === 0) return null;
 
     return (
-        <section className="space-y-4">
-            <h2 className="text-xl font-bold text-primary">Subcategories</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        <section className="space-y-1">
+            <div>
+                
+                <h2 className="md:text-xl text-sm font-bold text-primary">Check out our latest collections</h2>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 lg:grid-cols-8 gap-4">
                 {subcategories.map((sub: any) => {
                     const imgUrl = (sub.imageUrl || sub.iconUrl)
                         ? convertDriveLink(sub.imageUrl || sub.iconUrl)
@@ -95,19 +106,23 @@ async function SubcategoryCards({
                         <Link
                             key={sub.id}
                             href={href}
-                            className="group block rounded-xl overflow-hidden border border-neutral/20 bg-neutral/5 hover:border-primary/30 transition"
+                            className="group flex flex-col items-center text-center"
                         >
-                            <div className="aspect-square relative overflow-hidden bg-muted/50">
-                                <img
+                            <div className="relative w-full aspect-square max-w-[75px] mx-auto rounded-full overflow-hidden ring-2 ring-neutral/10 ring-offset-2 ring-offset-background transition-all duration-300 group-hover:ring-[#62748e] group-hover:ring-offset-4 group-hover:scale-[1.02]">
+                                <Image
+                                    width={160}
+                                    height={160}
+                                    sizes="(max-width: 640px) 40vw, 160px"
                                     src={imgUrl}
                                     alt={sub.name}
                                     referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                                 />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" aria-hidden />
                             </div>
-                            <div className="p-3 text-center">
-                                <p className="font-medium text-primary truncate">{sub.name}</p>
-                            </div>
+                            <span className="mt-3 block font-medium text-primary text-sm truncate w-full px-1 group-hover:text-primary/80 transition-colors">
+                                {sub.name}
+                            </span>
                         </Link>
                     );
                 })}
@@ -116,150 +131,99 @@ async function SubcategoryCards({
     );
 }
 
-async function ProductGrid({
-    categoryId,
-    categoryPath,
-    categorySlug,
+/** Compare filter color with variant/image color (hex case-insensitive, else trim + lowercase). */
+function colorMatches(filterColor: string, variantColor: string | null | undefined): boolean {
+    if (variantColor == null || variantColor === "") return false;
+    const a = filterColor.trim();
+    const b = variantColor.trim();
+    if (/^#[\da-fA-F]+$/.test(a) && /^#[\da-fA-F]+$/.test(b)) return a.toLowerCase() === b.toLowerCase();
+    return a.toLowerCase() === b.toLowerCase();
+}
+
+/** Normalize color for grouping (one card per color, ignore size). */
+function colorKey(c: string): string {
+    const s = c.trim();
+    return /^#[\da-fA-F]+$/.test(s) ? s.toLowerCase() : s.toLowerCase();
+}
+
+/** One card per color (ignore size): show each color as its own product card. */
+function ProductGrid({
+    products,
+    selectedColors,
 }: {
-    categoryId?: string;
-    categoryPath?: string;
-    categorySlug?: string;
+    products: ProductWithRelations[];
+    selectedColors?: string[];
 }) {
-    // Prefer categoryId (parent ID in route) — unambiguous, no path/slug mismatch
-    let categoryIds: string[] | null = null;
-    const hasCategoryFilter = Boolean(categoryId || categoryPath || categorySlug);
-
-    if (categoryId) {
-        // This category + all descendants: self + direct children (parentId) + recurse so "all products" includes every subcategory
-        const cat = await prisma.category.findUnique({
-            where: { id: categoryId },
-            select: { id: true, name: true, isActive: true },
-        });
-        console.log(`[ProductGrid] CategoryId: ${categoryId}, found category:`, cat);
-        if (cat && cat.isActive) {
-            const ids = new Set<string>([cat.id]);
-            let toExpand: string[] = [cat.id];
-            let iteration = 0;
-            while (toExpand.length > 0 && iteration < 10) {
-                iteration++;
-                console.log(`[ProductGrid] Iteration ${iteration}, expanding:`, toExpand);
-                const children = await prisma.category.findMany({
-                    where: { isActive: true, parentId: { in: toExpand } },
-                    select: { id: true, name: true },
-                });
-                console.log(`[ProductGrid] Found ${children.length} children:`, children.map(c => ({ id: c.id, name: c.name })));
-                children.forEach((c) => ids.add(c.id));
-                toExpand = children.map((c) => c.id);
-            }
-            categoryIds = Array.from(ids);
-            console.log(`[ProductGrid] Category: ${cat.name}, collected ${categoryIds.length} category IDs:`, categoryIds);
-        } else {
-            console.log(`[ProductGrid] Category NOT FOUND for id:`, categoryId);
-            categoryIds = [];
+    const hasColorFilter = selectedColors && selectedColors.length > 0;
+    const cards: { product: ProductWithRelations; variant: (typeof products)[0]["variants"][0]; colorKey: string }[] = [];
+    for (const p of products) {
+        const variants = p.variants ?? [];
+        const byColor = new Map<string, (typeof variants)[0]>();
+        for (const v of variants) {
+            const key = colorKey(v.color);
+            if (!byColor.has(key)) byColor.set(key, v);
         }
-    } else {
-        let dbPath: string | undefined;
-        const pathFromUrl = categoryPath?.replace(/\/$/, "").replace(/^\/*/, "/") || undefined;
-        const slugFromPath = pathFromUrl?.replace(/^\//, "").toLowerCase();
-
-        if (pathFromUrl) {
-            const byPath = await prisma.category.findFirst({
-                where: { path: pathFromUrl, isActive: true },
-                select: { path: true },
-            });
-            const bySlug = !byPath && slugFromPath
-                ? await prisma.category.findFirst({
-                    where: { slug: slugFromPath, isActive: true },
-                    select: { path: true },
-                })
-                : null;
-            dbPath = byPath?.path ?? bySlug?.path ?? undefined;
-        } else if (categorySlug) {
-            const cat = await prisma.category.findUnique({
-                where: { slug: categorySlug },
-                select: { path: true, isActive: true },
-            });
-            dbPath = cat?.isActive ? (cat.path || `/${categorySlug}`) : undefined;
-        } else {
-            dbPath = undefined;
-        }
-
-        if (dbPath) {
-            const matchingCategories = await prisma.category.findMany({
-                where: {
-                    isActive: true,
-                    OR: [
-                        { path: dbPath },
-                        { path: { startsWith: dbPath + "/" } },
-                    ],
-                },
-                select: { id: true },
-            });
-            categoryIds = matchingCategories.map((c) => c.id);
-        } else if (hasCategoryFilter) {
-            categoryIds = [];
-        }
-    }
-
-    const productWhere = categoryIds === null ? undefined : { categoryId: { in: categoryIds } };
-    const products = await prisma.product.findMany({
-        where: productWhere,
-        include: { images: true, variants: true, category: true },
-    });
-    
-    if (categoryId) {
-        console.log(`[ProductGrid] Found ${products.length} products for categoryIds:`, categoryIds);
-        if (products.length === 0 && categoryIds && categoryIds.length > 0) {
-            // Check if products exist at all with these category IDs
-            const allProducts = await prisma.product.findMany({
-                select: { id: true, name: true, categoryId: true },
-            });
-            console.log(`[DEBUG] Total products in DB: ${allProducts.length}`);
-            console.log(`[DEBUG] Products by category:`, allProducts.map(p => ({ name: p.name, categoryId: p.categoryId })));
+        const colorsToShow = hasColorFilter
+            ? Array.from(byColor.entries()).filter(([, v]) => selectedColors!.some((c) => colorMatches(c, v.color)))
+            : Array.from(byColor.entries());
+        for (const [key, variant] of colorsToShow) {
+            cards.push({ product: p, variant, colorKey: key });
         }
     }
 
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            {products.map((p: any) => (
-                <Link key={p.id} href={`/product/${p.slug}`} className="group space-y-4">
-                    <div className="aspect-3/4 overflow-hidden rounded-2xl bg-neutral/5 relative">
-                        {p.images[0] && (
-                            <Image
-                                width={400}
-                                height={400}
-                                src={convertDriveLink(p.images[0].driveUrl)}
-                                alt={p.name}
-
-                                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                            />
-                        )}
-                        <div className="absolute top-4 left-4 flex flex-col gap-0.5">
-                            {(p.variants[0] as any)?.actualPrice != null && Number((p.variants[0] as any).actualPrice) > Number(p.variants[0]?.price) && (
-                                <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-600 text-[10px] font-bold uppercase">
-                                    {Math.round((1 - Number(p.variants[0]?.price) / Number((p.variants[0] as any).actualPrice)) * 100)}% off
+            {cards.map(({ product: p, variant, colorKey: cKey }) => {
+                const imageForColor = p.images?.length
+                    ? p.images.find((img) => colorMatches(variant.color, img.color ?? undefined))
+                    : null;
+                const image = imageForColor ?? p.images?.[0];
+                return (
+                    <Link key={`${p.id}-${cKey}`} href={`/product/${p.slug}?color=${encodeURIComponent(variant.color)}`} className="group space-y-4">
+                        <div className="aspect-3/4 overflow-hidden rounded-2xl bg-neutral/5 relative">
+                            {image && (
+                                <Image
+                                    width={400}
+                                    height={400}
+                                    src={convertDriveLink(image.driveUrl)}
+                                    alt={`${p.name} (${variant.color})`}
+                                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                />
+                            )}
+                            <div className="absolute top-4 left-4 flex flex-col gap-0.5">
+                                {variant.actualPrice != null && Number(variant.actualPrice) > Number(variant.price) && (
+                                    <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-600 text-[10px] font-bold uppercase">
+                                        {Math.round((1 - Number(variant.price) / Number(variant.actualPrice)) * 100)}% off
+                                    </span>
+                                )}
+                                <span className="px-3 py-1 bg-background/90 backdrop-blur-sm rounded-full text-xs font-bold text-primary">
+                                    ₹{Math.round(Number(variant.price || 0))}
                                 </span>
+                            </div>
+                            {p.isTrending && (
+                                <div className="absolute top-4 right-4 flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/90 text-white text-[10px] font-bold uppercase shadow-sm">
+                                    <Flame className="size-3.5" aria-hidden />
+                                    <span>Trending</span>
+                                </div>
                             )}
-                            <span className="px-3 py-1 bg-background/90 backdrop-blur-sm rounded-full text-xs font-bold text-primary">
-                                ₹{Math.round(Number(p.variants[0]?.price || 0))}
-                            </span>
                         </div>
-                    </div>
-                    <div className="space-y-1 text-center">
-                        <h3 className="font-bold text-lg group-hover:text-[#314158] transition">{p.name}</h3>
-                        <div className="flex items-center justify-center gap-2 flex-wrap">
-                            {(p.variants[0] as any)?.actualPrice != null && Number((p.variants[0] as any).actualPrice) > Number(p.variants[0]?.price) && (
-                                <span className="text-secondary/60 text-sm line-through">₹{Math.round(Number((p.variants[0] as any).actualPrice))}</span>
-                            )}
-                            <span className="text-primary font-bold">₹{Math.round(Number(p.variants[0]?.price || 0))}</span>
+                        <div className="space-y-1 text-center">
+                            <h3 className="font-bold text-lg group-hover:text-[#314158] transition">{p.name}</h3>
+                           {/*  <p className="text-xs text-secondary/70 capitalize">{variant.color}</p> */}
+                            <div className="flex items-center justify-center gap-2 flex-wrap">
+                                {variant.actualPrice != null && Number(variant.actualPrice) > Number(variant.price) && (
+                                    <span className="text-secondary/60 text-sm line-through">₹{Math.round(Number(variant.actualPrice))}</span>
+                                )}
+                                <span className="text-primary font-bold">₹{Math.round(Number(variant.price || 0))}</span>
+                            </div>
+                            <p className="text-secondary/60 text-sm">{p.category.name}</p>
                         </div>
-                        <p className="text-secondary/60 text-sm">{p.category.name}</p>
-                    </div>
-                </Link>
-            ))}
-            {products.length === 0 && (
+                    </Link>
+                );
+            })}
+            {cards.length === 0 && (
                 <div className="col-span-full py-20 text-center text-secondary/50">
-                    No products found in this category.
+                    No products found.
                 </div>
             )}
         </div>
@@ -283,13 +247,18 @@ function GridSkeleton() {
 export default async function ProductsPage({
     searchParams,
 }: {
-    searchParams: Promise<{ category?: string; path?: string; categoryId?: string }>;
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-    const { category, path, categoryId } = await searchParams;
+    const raw = await searchParams;
+    const params = parseProductsSearchParams(raw);
+    const { products, facets } = await getProductsAndFacets(params);
+    const { categoryId, path, category, q } = params;
 
-    // Heading: prefer category name from ID, then path, then slug
+    // Heading: search query, then category name from ID, then path, then slug
     let heading = "All Collections";
-    if (categoryId) {
+    if (q) {
+        heading = `Search: "${q}"`;
+    } else if (categoryId) {
         const cat = await prisma.category.findUnique({
             where: { id: categoryId },
             select: { name: true },
@@ -304,21 +273,23 @@ export default async function ProductsPage({
     return (
         <div className="min-h-screen pb-20">
             <Navbar />
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 space-y-8">
-                <div className="text-center py-10 space-y-4">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 space-y-4">
+                <div className="text-center space-y-2">
                     <h1 className="text-4xl font-bold text-primary capitalize">
                         {heading}
                     </h1>
-                    <p className="text-secondary/70">Expertly crafted pieces for a timeless wardrobe.</p>
+                    <p className="text-secondary/70">
+                        {q ? `${products.length} result${products.length !== 1 ? "s" : ""}` : "Expertly crafted pieces for a timeless wardrobe."}
+                    </p>
                 </div>
 
                 <Suspense fallback={null}>
                     <SubcategoryCards categoryId={categoryId} categorySlug={category} categoryPath={path} />
                 </Suspense>
 
-                <Suspense fallback={<GridSkeleton />}>
-                    <ProductGrid categoryId={categoryId} categorySlug={category} categoryPath={path} />
-                </Suspense>
+                <ProductsFiltersSidebar params={params} facets={facets}>
+                    <ProductGrid products={products} selectedColors={params.color} />
+                </ProductsFiltersSidebar>
             </div>
         </div>
     );

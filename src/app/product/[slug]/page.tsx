@@ -19,10 +19,14 @@ export async function generateMetadata({
 
 export default async function ProductDetailPage({
     params,
+    searchParams,
 }: {
     params: Promise<{ slug: string }>;
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
     const { slug } = await params;
+    const raw = await searchParams;
+    const colorFromUrl = typeof raw.color === "string" ? raw.color.trim() : undefined;
 
     const product = await prisma.product.findUnique({
         where: { slug },
@@ -34,7 +38,7 @@ export default async function ProductDetailPage({
     return (
         <div className="min-h-screen bg-white">
             <Navbar />
-            <ProductDetail product={product} />
+            <ProductDetail product={product} initialColor={colorFromUrl} />
         </div>
     );
 }

@@ -6,6 +6,7 @@ import { ShoppingCart, User, Menu, X, Heart, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/lib/cart-context";
 import { getDrivePreviewUrl } from "@/lib/utils-drive";
+import Image from "next/image";
 
 type NavCategory = {
     id: string;
@@ -42,11 +43,12 @@ export default function Navbar() {
     }, []);
 
     return (
-        <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-neutral/10">
+        <nav className="sticky top-0 z-50 bg-zinc-900/65 backdrop-blur-md border-b border-white/10">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16 items-center">
-                    <Link href="/" className="text-2xl font-bold text-primary tracking-tighter">
-                        E-COM<span className="text-accent">.</span>
+                    <Link href="/" className="text-2xl font-bold text-white tracking-tighter hover:text-white/90 transition">
+                   {/*      E-COM<span className="text-zinc-400">.</span> */}
+                    <Image src="/Images/logo/logo.png" alt="E-COM" width={100} height={100} />
                     </Link>
 
                     {/* Desktop Nav with dropdowns */}
@@ -67,7 +69,7 @@ export default function Navbar() {
                                 >
                                     <Link
                                         href={href}
-                                        className="flex items-center gap-1 py-2 px-2 text-secondary hover:text-primary transition font-medium rounded-md"
+                                        className="flex items-center gap-1 py-2 px-2 text-zinc-200 hover:text-white transition font-medium rounded-md"
                                     >
                                         {imgUrl ? (
                                             <span className="shrink-0 w-6 h-6 rounded overflow-hidden border border-neutral/20 bg-muted/50">
@@ -83,7 +85,7 @@ export default function Navbar() {
                                         {hasChildren ? <ChevronDown className="w-4 h-4 opacity-60" /> : null}
                                     </Link>
                                     {(hasChildren || imgUrl) && openDropdownId === cat.id && (
-                                        <div className="absolute left-0 top-full pt-1 z-50 min-w-[280px]">
+                                        <div className="absolute left-0 top-full pt-1 z-50 min-w-[280px] nav-category-dropdown">
                                             <div className="bg-background border border-neutral/20 rounded-lg shadow-lg overflow-hidden">
                                                 <Link
                                                     href={href}
@@ -142,28 +144,28 @@ export default function Navbar() {
                         })}
                     </div>
 
-                    <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-4 nav-utility-icons">
                         <Link href="/wishlist">
-                            <Button variant="ghost" size="icon" className="text-secondary hover:text-primary">
+                            <Button variant="ghost" size="icon" className="text-zinc-200 hover:text-black transition-colors">
                                 <Heart className="w-6 h-6" />
                             </Button>
                         </Link>
                         <Link href="/cart">
-                            <Button variant="ghost" size="icon" className="relative text-secondary hover:text-primary">
+                            <Button variant="ghost" size="icon" className="relative text-zinc-200 hover:text-black transition-colors">
                                 <ShoppingCart className="w-6 h-6" />
                                 {cartCount > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-primary text-background text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                                    <span className="absolute -top-1 -right-1 bg-white text-zinc-900 text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
                                         {cartCount}
                                     </span>
                                 )}
                             </Button>
                         </Link>
                         <Link href="/login">
-                            <Button variant="ghost" size="icon" className="text-secondary hover:text-primary">
+                            <Button variant="ghost" size="icon" className="text-zinc-200 hover:text-black transition-colors">
                                 <User className="w-6 h-6" />
                             </Button>
                         </Link>
-                        <button className="md:hidden" onClick={() => setIsOpen(!isOpen)}>
+                        <button className="md:hidden text-zinc-200 hover:text-black transition-colors" onClick={() => setIsOpen(!isOpen)}>
                             {isOpen ? <X /> : <Menu />}
                         </button>
                     </div>

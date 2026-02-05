@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getDrivePreviewUrl } from "@/lib/utils-drive";
+import { getColorSwatchValue, PALETTE_COLORS } from "@/lib/utils-color";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,6 +18,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, ChevronDown } from "lucide-react";
 
 type Category = {
   id: string;
@@ -27,7 +46,7 @@ type Category = {
   level?: number;
 };
 
-type ProductImage = { driveUrl: string; color?: string | null };
+type ProductImage = { driveUrl: string; color?: string | null; displayOrder?: number };
 type ProductVariant = {
   color: string;
   size: string;
@@ -48,6 +67,8 @@ type ColorGroup = {
   }>;
 };
 
+type Brand = { id: string; name: string; slug: string };
+
 type Product = {
   id: string;
   name: string;
@@ -55,6 +76,9 @@ type Product = {
   description: string;
   categoryId: string;
   category?: { id: string; name: string };
+  brandId?: string | null;
+  brand?: Brand | null;
+  isTrending?: boolean;
   images: ProductImage[];
   variants: ProductVariant[];
 };
@@ -72,8 +96,214 @@ function emptySizeOption() {
 }
 
 function calcDiscountedPrice(actualPrice: number, discountPercent: number): number {
-  if (discountPercent <= 0) return actualPrice;
-  return Math.round(actualPrice * (1 - discountPercent / 100) * 100) / 100;
+  if (discountPercent <= 0) return Math.round(actualPrice);
+  return Math.round(actualPrice * (1 - discountPercent / 100));
+}
+
+function sortableImageId(colorIdx: number, imgIdx: number) {
+  return `img-${colorIdx}-${imgIdx}`;
+}
+
+/** Color combobox: suggestions from existing catalog colors + palette, with swatches. Allows custom value. */
+function ColorCombobox({
+  value,
+  onChange,
+  existingColors,
+  onBlur,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  existingColors: string[];
+  onBlur?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inputValue, setInputValue] = useState(value);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handle = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [open]);
+
+  const q = inputValue.trim().toLowerCase();
+  const existingFiltered = existingColors.filter(
+    (c) => c.toLowerCase().includes(q) || getColorSwatchValue(c).toLowerCase().includes(q)
+  );
+  const paletteFiltered = PALETTE_COLORS.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.hex.toLowerCase().includes(q)
+  );
+  const hasSuggestions = existingFiltered.length > 0 || paletteFiltered.length > 0;
+
+  const pick = (val: string) => {
+    onChange(val);
+    setInputValue(val);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} className="relative max-w-xs">
+      <Input
+        value={inputValue}
+        onChange={(e) => {
+          setInputValue(e.target.value);
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => onBlur?.()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+        }}
+        placeholder="#000000 or Black"
+        className="pr-8"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setOpen((o) => !o)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        aria-label="Toggle suggestions"
+      >
+        <ChevronDown className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-auto rounded-md border border-input bg-popover shadow-md">
+          {hasSuggestions ? (
+            <>
+              {existingFiltered.length > 0 && (
+                <div className="p-1.5">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1">In catalog</p>
+                  {existingFiltered.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => pick(c)}
+                    >
+                      <span
+                        className="h-5 w-5 shrink-0 rounded-full border border-neutral/20"
+                        style={{ backgroundColor: getColorSwatchValue(c) }}
+                      />
+                      <span className="truncate">{c}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {paletteFiltered.length > 0 && (
+                <div className="p-1.5 border-t border-border">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1">Palette</p>
+                  {paletteFiltered.map((p) => (
+                    <button
+                      key={p.hex}
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => pick(p.name)}
+                    >
+                      <span
+                        className="h-5 w-5 shrink-0 rounded-full border border-neutral/20"
+                        style={{ backgroundColor: p.hex }}
+                      />
+                      <span className="truncate capitalize">{p.name}</span>
+                      <span className="text-muted-foreground text-xs ml-auto">{p.hex}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="px-3 py-4 text-sm text-muted-foreground">Type to search or enter a custom color (name or hex)</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SortableImageRow({
+  id,
+  url,
+  previewKey,
+  failed,
+  onUrlChange,
+  onRemove,
+  onPreviewError,
+  canRemove,
+}: {
+  id: string;
+  url: string;
+  previewKey: string;
+  failed: boolean;
+  onUrlChange: (value: string) => void;
+  onRemove: () => void;
+  onPreviewError?: () => void;
+  canRemove: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  const previewUrl = url.trim();
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex gap-2 items-center rounded-md border p-2 transition-opacity ${isDragging ? "opacity-60 bg-muted/50 z-10" : "bg-background"}`}
+    >
+      <button
+        type="button"
+        className="shrink-0 touch-none cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1 rounded"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="shrink-0 w-16 h-16 rounded-md border border-neutral/20 bg-muted/50 overflow-hidden flex items-center justify-center">
+        {!previewUrl ? (
+          <span className="text-[10px] text-muted-foreground text-center px-1">Paste link</span>
+        ) : failed ? (
+          <span className="text-[10px] text-muted-foreground text-center px-1">Couldn&apos;t load</span>
+        ) : (
+          <img
+            src={getDrivePreviewUrl(previewUrl)}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover"
+            onError={() => onPreviewError?.()}
+          />
+        )}
+      </div>
+      <Input
+        value={url}
+        onChange={(e) => onUrlChange(e.target.value)}
+        placeholder="https://drive.google.com/..."
+        className="flex-1 min-w-0"
+      />
+      <Button variant="outline" type="button" disabled={!canRemove} onClick={onRemove}>
+        Remove
+      </Button>
+    </div>
+  );
 }
 
 export default function ProductsAdminClient() {
@@ -81,15 +311,22 @@ export default function ProductsAdminClient() {
   const [saving, setSaving] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [brandId, setBrandId] = useState("");
+  const [isTrending, setIsTrending] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
   const [colorGroups, setColorGroups] = useState<ColorGroup[]>([emptyColorGroup()]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<{
     id: string;
     name: string;
@@ -103,15 +340,20 @@ export default function ProductsAdminClient() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [pRes, cRes] = await Promise.all([fetch("/api/products"), fetch("/api/categories")]);
-      const [pData, cData] = await Promise.all([pRes.json(), cRes.json()]);
+      const [pRes, cRes, bRes] = await Promise.all([
+        fetch("/api/products"),
+        fetch("/api/categories"),
+        fetch("/api/brands?activeOnly=true"),
+      ]);
+      const [pData, cData, bData] = await Promise.all([pRes.json(), cRes.json(), bRes.json()]);
       setProducts(Array.isArray(pData) ? pData : []);
-      // categories API returns { flat, tree }
       setCategories(Array.isArray(cData?.flat) ? cData.flat : Array.isArray(cData) ? cData : []);
+      setBrands(Array.isArray(bData) ? bData : []);
     } catch {
       toast.error("Failed to load admin data");
       setProducts([]);
       setCategories([]);
+      setBrands([]);
     } finally {
       setLoading(false);
     }
@@ -129,6 +371,17 @@ export default function ProductsAdminClient() {
     categories.forEach((c) => map.set(c.id, c));
     return map;
   }, [categories]);
+
+  const existingCatalogColors = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) =>
+      p.variants?.forEach((v) => {
+        const c = (v as { color?: string }).color?.trim();
+        if (c) set.add(c);
+      })
+    );
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [products]);
 
   const categoryOptions = useMemo(() => {
     const q = categorySearch.trim().toLowerCase();
@@ -166,6 +419,8 @@ export default function ProductsAdminClient() {
     setName(editingProduct.name || "");
     setDescription(editingProduct.description || "");
     setCategoryId(editingProduct.categoryId || "");
+    setBrandId(editingProduct.brandId ?? "");
+    setIsTrending(editingProduct.isTrending ?? false);
 
     // Group variants by color
     if (editingProduct.variants?.length) {
@@ -179,7 +434,10 @@ export default function ProductsAdminClient() {
             editingProduct.images?.filter(
               (img) => (img.color || "").toLowerCase() === colorKey
             ) || [];
-          const urls = imagesForColor.map((img) => img.driveUrl).slice(0, 6);
+          const sorted = [...imagesForColor].sort(
+            (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)
+          );
+          const urls = sorted.map((img) => img.driveUrl).slice(0, 6);
           while (urls.length < 3) urls.push("");
 
           grouped.set(colorKey, {
@@ -241,6 +499,8 @@ export default function ProductsAdminClient() {
     setName("");
     setDescription("");
     setCategoryId("");
+    setBrandId("");
+    setIsTrending(false);
     setCategorySearch("");
     setColorGroups([emptyColorGroup()]);
     setFailedPreviews(new Set());
@@ -293,8 +553,8 @@ export default function ProductsAdminClient() {
             color: String(group.color).trim(),
             size: String(size.size).trim(),
             stock: Number(size.stock || 0),
-            price: priceNum,
-            actualPrice: actualPriceNum != null && actualPriceNum > 0 ? actualPriceNum : null,
+            price: Math.round(priceNum),
+            actualPrice: actualPriceNum != null && actualPriceNum > 0 ? Math.round(actualPriceNum) : null,
           };
         })
       );
@@ -303,9 +563,10 @@ export default function ProductsAdminClient() {
         group.driveUrls
           .map((url) => url.trim())
           .filter(Boolean)
-          .map((url) => ({
+          .map((url, imgIdx) => ({
             driveUrl: url,
             color: group.color?.toString().trim() || null,
+            displayOrder: imgIdx,
           }))
       );
 
@@ -313,6 +574,8 @@ export default function ProductsAdminClient() {
         name: name.trim(),
         description: description.trim(),
         categoryId,
+        brandId: brandId || null,
+        isTrending,
         variants: variantsPayload,
         images: imagesPayload,
       };
@@ -439,6 +702,33 @@ export default function ProductsAdminClient() {
                 })}
               </select>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-brand">Brand (optional)</Label>
+              <select
+                id="p-brand"
+                value={brandId}
+                onChange={(e) => setBrandId(e.target.value)}
+                className="h-10 w-full rounded-md border border-neutral/20 bg-background px-3 text-sm"
+              >
+                <option value="">None</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2 flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isTrending}
+                  onChange={(e) => setIsTrending(e.target.checked)}
+                  className="rounded border-input"
+                />
+                <span className="text-sm font-medium">Trending</span>
+              </label>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -453,11 +743,28 @@ export default function ProductsAdminClient() {
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-bold text-primary">Color Variants</h3>
-              <Button variant="outline" onClick={handleAddColorGroup} type="button">
-                Add Color Variant
-              </Button>
+              <div className="flex gap-2">
+                {colorGroups.length >= 2 && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    disabled={colorGroups[0].sizes.length === 0}
+                    onClick={() =>
+                      setColorGroups((prev) =>
+                        prev.map((g, i) => (i === 0 ? g : { ...g, sizes: prev[0].sizes.map((s) => ({ ...s })) }))
+                      )
+                    }
+                    title="Copy size rows (size, stock, price, actualPrice, discount%) from first color to all other colors. Each field remains editable."
+                  >
+                    Copy sizes from first color to all
+                  </Button>
+                )}
+                <Button variant="outline" onClick={handleAddColorGroup} type="button">
+                  Add Color Variant
+                </Button>
+              </div>
             </div>
             <div className="space-y-4">
               {colorGroups.map((group, colorIdx) => (
@@ -466,15 +773,14 @@ export default function ProductsAdminClient() {
                   <div className="flex items-center justify-between pb-2 border-b border-neutral/10">
                     <div className="space-y-2 flex-1">
                       <Label>Color</Label>
-                      <Input
+                      <ColorCombobox
                         value={String(group.color)}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           setColorGroups((prev) =>
-                            prev.map((g, i) => (i === colorIdx ? { ...g, color: e.target.value } : g))
+                            prev.map((g, i) => (i === colorIdx ? { ...g, color: val } : g))
                           )
                         }
-                        placeholder="#000000 or Black"
-                        className="max-w-xs"
+                        existingColors={existingCatalogColors}
                       />
                     </div>
                     <Button
@@ -487,10 +793,10 @@ export default function ProductsAdminClient() {
                     </Button>
                   </div>
 
-                  {/* Images Section - Shared across all sizes of this color */}
+                  {/* Images Section - Shared across all sizes of this color (drag to reorder) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label>Images for this color (3–6) - Shared across all sizes</Label>
+                      <Label>Images for this color (3–6) - Drag to reorder</Label>
                       <Button
                         variant="outline"
                         size="sm"
@@ -507,84 +813,86 @@ export default function ProductsAdminClient() {
                         Add Image
                       </Button>
                     </div>
-                    <div className="space-y-2">
-                      {group.driveUrls.map((url, imgIdx) => {
-                        const previewKey = `${colorIdx}-${imgIdx}`;
-                        const previewUrl = url.trim();
-                        const failed = failedPreviews.has(previewKey);
-                        return (
-                          <div key={imgIdx} className="flex gap-2 items-center">
-                            <div
-                              className="shrink-0 w-16 h-16 rounded-md border border-neutral/20 bg-muted/50 overflow-hidden flex items-center justify-center"
-                              title={previewUrl ? "Image preview" : "Paste a Drive link"}
-                            >
-                              {!previewUrl ? (
-                                <span className="text-[10px] text-muted-foreground text-center px-1">
-                                  Paste link
-                                </span>
-                              ) : failed ? (
-                                <span className="text-[10px] text-muted-foreground text-center px-1">
-                                  Couldn&apos;t load
-                                </span>
-                              ) : (
-                                <img
-                                  src={getDrivePreviewUrl(previewUrl)}
-                                  alt=""
-                                  referrerPolicy="no-referrer"
-                                  className="w-full h-full object-cover"
-                                  onError={() =>
-                                    setFailedPreviews((prev) => new Set(prev).add(previewKey))
-                                  }
-                                />
-                              )}
-                            </div>
-                            <Input
-                              value={url}
-                              onChange={(e) => {
-                                setFailedPreviews((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(previewKey);
-                                  return next;
-                                });
-                                setColorGroups((prev) =>
-                                  prev.map((g, i) =>
-                                    i === colorIdx
-                                      ? {
-                                          ...g,
-                                          driveUrls: g.driveUrls.map((u, j) =>
-                                            j === imgIdx ? e.target.value : u
-                                          ),
-                                        }
-                                      : g
-                                  )
-                                );
-                              }}
-                              placeholder="https://drive.google.com/..."
-                              className="flex-1 min-w-0"
-                            />
-                            <Button
-                              variant="outline"
-                              type="button"
-                              disabled={group.driveUrls.length <= 3}
-                              onClick={() =>
-                                setColorGroups((prev) =>
-                                  prev.map((g, i) =>
-                                    i === colorIdx
-                                      ? {
-                                          ...g,
-                                          driveUrls: g.driveUrls.filter((_, j) => j !== imgIdx),
-                                        }
-                                    : g
-                                  )
-                                )
-                              }
-                            >
-                              Remove
-                            </Button>
-                          </div>
+                    <DndContext
+                      sensors={dndSensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(event: DragEndEvent) => {
+                        const { active, over } = event;
+                        if (!over || active.id === over.id) return;
+                        const activeId = String(active.id);
+                        const overId = String(over.id);
+                        if (!activeId.startsWith("img-") || !overId.startsWith("img-")) return;
+                        const [, cIdxStr, activeIdxStr] = activeId.split("-");
+                        const [, , overIdxStr] = overId.split("-");
+                        const cIdx = parseInt(cIdxStr, 10);
+                        const oldIndex = parseInt(activeIdxStr, 10);
+                        const newIndex = parseInt(overIdxStr, 10);
+                        if (cIdx !== colorIdx || isNaN(oldIndex) || isNaN(newIndex)) return;
+                        setColorGroups((prev) =>
+                          prev.map((g, i) =>
+                            i === colorIdx
+                              ? { ...g, driveUrls: arrayMove(g.driveUrls, oldIndex, newIndex) }
+                              : g
+                          )
                         );
-                      })}
-                    </div>
+                      }}
+                    >
+                      <SortableContext
+                        items={group.driveUrls.map((_, imgIdx) => sortableImageId(colorIdx, imgIdx))}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <div className="space-y-2">
+                          {group.driveUrls.map((url, imgIdx) => {
+                            const previewKey = `${colorIdx}-${imgIdx}`;
+                            const failed = failedPreviews.has(previewKey);
+                            return (
+                              <SortableImageRow
+                                key={sortableImageId(colorIdx, imgIdx)}
+                                id={sortableImageId(colorIdx, imgIdx)}
+                                url={url}
+                                previewKey={previewKey}
+                                failed={failed}
+                                onUrlChange={(value) => {
+                                  setFailedPreviews((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(previewKey);
+                                    return next;
+                                  });
+                                  setColorGroups((prev) =>
+                                    prev.map((g, i) =>
+                                      i === colorIdx
+                                        ? {
+                                            ...g,
+                                            driveUrls: g.driveUrls.map((u, j) =>
+                                              j === imgIdx ? value : u
+                                            ),
+                                          }
+                                        : g
+                                    )
+                                  );
+                                }}
+                                onRemove={() =>
+                                  setColorGroups((prev) =>
+                                    prev.map((g, i) =>
+                                      i === colorIdx
+                                        ? {
+                                            ...g,
+                                            driveUrls: g.driveUrls.filter((_, j) => j !== imgIdx),
+                                          }
+                                        : g
+                                    )
+                                  )
+                                }
+                                onPreviewError={() =>
+                                  setFailedPreviews((prev) => new Set(prev).add(previewKey))
+                                }
+                                canRemove={group.driveUrls.length > 3}
+                              />
+                            );
+                          })}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
                   </div>
 
                   {/* Sizes Section - Multiple sizes per color */}
@@ -753,6 +1061,16 @@ export default function ProductsAdminClient() {
                       <p className="text-xs text-secondary mt-1">
                         Category: <span className="font-medium text-primary">{p.category?.name || p.categoryId}</span>
                       </p>
+                      {p.brand && (
+                        <p className="text-xs text-secondary mt-1">
+                          Brand: <span className="font-medium text-primary">{p.brand.name}</span>
+                        </p>
+                      )}
+                      {p.isTrending && (
+                        <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-medium">
+                          Trending
+                        </span>
+                      )}
                       <p className="text-xs text-secondary mt-1">
                         Variants: <span className="font-medium text-primary">{p.variants?.length || 0}</span>
                       </p>

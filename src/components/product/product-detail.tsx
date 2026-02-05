@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { convertDriveLink } from "@/lib/utils-drive";
 import { Button } from "@/components/ui/button";
 import { Heart, ShoppingBag, ChevronLeft, ChevronRight, Ruler } from "lucide-react";
@@ -9,18 +10,44 @@ import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/cart-context";
+import { getColorSwatchValue, getColorDisplayName } from "@/lib/utils-color";
+
+const RevealWaveImage = dynamic(
+    () => import("@/components/ui/reveal-wave-image").then((m) => m.RevealWaveImage),
+    { ssr: false, loading: () => <div className="w-full h-full bg-neutral/10 animate-pulse" /> }
+);
+
+function colorMatches(a: string, b: string | null | undefined): boolean {
+    if (b == null || b === "") return false;
+    const x = a.trim();
+    const y = b.trim();
+    if (/^#[\da-fA-F]+$/.test(x) && /^#[\da-fA-F]+$/.test(y)) return x.toLowerCase() === y.toLowerCase();
+    return x.toLowerCase() === y.toLowerCase();
+}
+
+function resolveInitialColor(product: any, initialColorFromUrl: string | undefined): string | undefined {
+    if (!initialColorFromUrl || !product.variants?.length) return product.variants?.[0]?.color;
+    const match = product.variants.find((v: any) => colorMatches(initialColorFromUrl, v.color));
+    return match ? match.color : product.variants[0]?.color;
+}
 
 interface ProductDetailProps {
     product: any;
+    initialColor?: string;
 }
 
-export default function ProductDetail({ product }: ProductDetailProps) {
+export default function ProductDetail({ product, initialColor }: ProductDetailProps) {
     const { data: session } = useSession();
     const router = useRouter();
     const { addToCart } = useCart();
+    const resolvedInitial = resolveInitialColor(product, initialColor);
     const [selectedImage, setSelectedImage] = useState(0);
-    const [selectedColor, setSelectedColor] = useState(product.variants[0]?.color);
-    const [selectedSize, setSelectedSize] = useState(product.variants[0]?.size);
+    const [selectedColor, setSelectedColor] = useState(resolvedInitial);
+    const [selectedSize, setSelectedSize] = useState(() => {
+        const forColor = product.variants?.filter((v: any) => colorMatches(resolvedInitial ?? "", v.color)) ?? [];
+        const inStock = forColor.find((v: any) => (v.stock ?? 0) > 0);
+        return inStock ? inStock.size : forColor[0]?.size ?? product.variants?.[0]?.size;
+    });
     const [isWishlisted, setIsWishlisted] = useState(false);
     const [wishlistLoading, setWishlistLoading] = useState(false);
     const [isAddingToCart, setIsAddingToCart] = useState(false);
@@ -30,6 +57,17 @@ export default function ProductDetail({ product }: ProductDetailProps) {
             fetchWishlistStatus();
         }
     }, [session, product.id]);
+
+    useEffect(() => {
+        const resolved = resolveInitialColor(product, initialColor);
+        if (resolved && resolved !== selectedColor) {
+            setSelectedColor(resolved);
+            setSelectedImage(0);
+            const forColor = product.variants?.filter((v: any) => colorMatches(resolved, v.color)) ?? [];
+            const inStock = forColor.find((v: any) => (v.stock ?? 0) > 0);
+            setSelectedSize(inStock ? inStock.size : forColor[0]?.size ?? selectedSize);
+        }
+    }, [initialColor]);
 
     const fetchWishlistStatus = async () => {
         try {
@@ -167,33 +205,58 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                     ))}
                 </div>
 
-                {/* Center: Main Image */}
+                {/* Center: Main Image (Reveal Wave only for CORS-friendly URLs; Drive uses Image) */}
                 <div className="flex-1 relative group bg-neutral/5 rounded-sm overflow-hidden aspect-3/4">
-                    <Image
-                        className="z-10 w-full h-full object-cover"
-                        src={convertDriveLink(displayImages[selectedImage]?.driveUrl)}
-                        alt={product.name}
-                        referrerPolicy="no-referrer"
-                        width="0"
-                        height="0"
-                        sizes="100vw"
-                    />
+                    {(() => {
+                        const imageSrc = displayImages[selectedImage]?.driveUrl
+                            ? convertDriveLink(displayImages[selectedImage].driveUrl)
+                            : convertDriveLink(displayImages[0]?.driveUrl ?? "");
+                        const isDriveOrCorsBlocked = /google\.com|drive\.|usercontent\.google/.test(imageSrc);
+                        if (imageSrc && !isDriveOrCorsBlocked) {
+                            return (
+                                <RevealWaveImage
+                                    src={imageSrc}
+                                    className="absolute inset-0 z-0 w-full h-full"
+                                    waveSpeed={0.25}
+                                    waveFrequency={1.5}
+                                    waveAmplitude={0.12}
+                                    revealRadius={0.4}
+                                    revealSoftness={0.6}
+                                    pixelSize={2}
+                                    mouseRadius={0.3}
+                                />
+                            );
+                        }
+                        return imageSrc ? (
+                            <Image
+                                className="z-10 w-full h-full object-cover"
+                                src={imageSrc}
+                                alt={product.name}
+                                referrerPolicy="no-referrer"
+                                width={0}
+                                height={0}
+                                sizes="100vw"
+                            />
+                        ) : (
+                            <div className="absolute inset-0 z-0 bg-neutral/10" />
+                        );
+                    })()}
 
                     {/* Navigation Arrows */}
                     <button
                         onClick={() => setSelectedImage(prev => (prev > 0 ? prev - 1 : displayImages.length - 1))}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
+                        className="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
                     >
                         <ChevronLeft className="w-6 h-6" />
                     </button>
                     <button
                         onClick={() => setSelectedImage(prev => (prev < displayImages.length - 1 ? prev + 1 : 0))}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
+                        className="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow-sm"
                     >
                         <ChevronRight className="w-6 h-6" />
                     </button>
 
-                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[10px] text-secondary/60 bg-white/90 px-3 py-1 rounded-full border border-neutral/10 font-bold uppercase tracking-widest italic">
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 text-[10px] text-secondary/60 bg-white/90 px-3 py-1 rounded-full border border-neutral/10 font-bold uppercase tracking-widest italic">
                         Premium Quality Assured
                     </div>
                 </div>
@@ -226,7 +289,7 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                     <div className="space-y-4">
                         <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-secondary/80">
                             <span>Select Color</span>
-                            <span className="text-primary bg-primary/10 px-2 py-0.5 rounded">{selectedColor}</span>
+                            <span className="text-primary bg-primary/10 px-2 py-0.5 rounded">{getColorDisplayName(selectedColor)}</span>
                         </div>
                         <div className="flex flex-wrap gap-4">
                             {colors.map((color: any) => (
@@ -237,8 +300,8 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                                 >
                                     <div
                                         className="w-full h-full rounded-full shadow-inner border border-black/10"
-                                        style={{ backgroundColor: color.toLowerCase() }}
-                                        title={color}
+                                        style={{ backgroundColor: getColorSwatchValue(color) }}
+                                        title={getColorDisplayName(color)}
                                     />
                                     {selectedColor === color && (
                                         <div className="absolute -top-1 -right-1 w-4 h-4 bg-primary text-white rounded-full flex items-center justify-center border-2 border-white">

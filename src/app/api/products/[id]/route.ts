@@ -21,6 +21,12 @@ export async function DELETE(
         await prisma.wishlist.deleteMany({
             where: { productId: id },
         });
+        await prisma.orderItem.deleteMany({
+            where: { productId: id },
+        });
+        await prisma.review.deleteMany({
+            where: { productId: id },
+        });
         await prisma.productVariant.deleteMany({
             where: { productId: id },
         });
@@ -50,7 +56,7 @@ export async function PATCH(
 
         const { id } = await params;
         const body = await req.json();
-        const { name, description, categoryId, images, variants } = body;
+        const { name, description, categoryId, brandId, isTrending, images, variants } = body;
 
         // Auto-generate slug from name
         let slug = name.toLowerCase().trim().replace(/ /g, "-").replace(/[^\w-]+/g, "");
@@ -79,10 +85,13 @@ export async function PATCH(
                     slug,
                     description,
                     categoryId,
+                    brandId: brandId === "" || brandId === undefined ? null : brandId,
+                    isTrending: isTrending === undefined ? undefined : Boolean(isTrending),
                     images: {
-                        create: images.map((img: { driveUrl: string, color?: string }) => ({
+                        create: images.map((img: { driveUrl: string; color?: string; displayOrder?: number }, idx: number) => ({
                             driveUrl: img.driveUrl,
                             color: img.color || null,
+                            displayOrder: img.displayOrder ?? idx,
                         })),
                     },
                     variants: {
@@ -90,8 +99,8 @@ export async function PATCH(
                             color: v.color,
                             size: v.size,
                             stock: parseInt(v.stock),
-                            price: parseFloat(v.price),
-                            actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? parseFloat(v.actualPrice) : null,
+                            price: Math.round(Number(v.price)),
+                            actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? Math.round(Number(v.actualPrice)) : null,
                         })),
                     },
                 },

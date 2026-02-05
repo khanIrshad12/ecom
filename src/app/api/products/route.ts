@@ -6,7 +6,8 @@ export async function GET() {
         const products = await prisma.product.findMany({
             include: {
                 category: true,
-                images: true,
+                brand: true,
+                images: { orderBy: { displayOrder: "asc" } },
                 variants: true,
             },
         });
@@ -22,8 +23,10 @@ export async function POST(req: Request) {
             name,
             description,
             categoryId,
+            brandId,
+            isTrending = false,
             variants, // Array of {color, size, stock, price}
-            images, // Array of {driveUrl, color}
+            images, // Array of {driveUrl, color?, displayOrder?}
         } = await req.json();
 
         let slug = name.toLowerCase().trim().replace(/ /g, "-").replace(/[^\w-]+/g, "");
@@ -40,19 +43,22 @@ export async function POST(req: Request) {
                 slug,
                 description,
                 categoryId,
+                brandId: brandId || null,
+                isTrending: Boolean(isTrending),
                 variants: {
                     create: variants.map((v: any) => ({
                         color: v.color,
                         size: v.size,
                         stock: parseInt(v.stock),
-                        price: parseFloat(v.price),
-                        actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? parseFloat(v.actualPrice) : null,
+                        price: Math.round(Number(v.price)),
+                        actualPrice: v.actualPrice != null && Number(v.actualPrice) > 0 ? Math.round(Number(v.actualPrice)) : null,
                     })),
                 },
                 images: {
-                    create: images.map((img: { driveUrl: string, color?: string }) => ({
+                    create: images.map((img: { driveUrl: string; color?: string; displayOrder?: number }, idx: number) => ({
                         driveUrl: img.driveUrl,
                         color: img.color || null,
+                        displayOrder: img.displayOrder ?? idx,
                     })),
                 },
             },

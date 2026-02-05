@@ -47,7 +47,7 @@
   --color-accent: var(--accent);
   --color-neutral: var(--neutral);
 
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -116,6 +116,180 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* Hero navbar overlay – transparent so hero shows through; navbar stays sticky; don't block Lumina slider clicks */
+.hero-nav-overlay {
+  pointer-events: none;
+}
+.hero-nav-overlay > div:first-child,
+.hero-nav-overlay > nav {
+  pointer-events: auto;
+}
+.hero-nav-overlay > div:first-child {
+  background: rgba(0, 0, 0, 0.35) !important;
+  color: rgba(255, 255, 255, 0.95);
+  border: none;
+}
+.hero-nav-overlay > nav {
+  background: rgba(24, 24, 27, 0.65) !important; /* zinc-900 with transparency */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+}
+.hero-nav-overlay a,
+.hero-nav-overlay button,
+.hero-nav-overlay [class*="text-primary"],
+.hero-nav-overlay [class*="text-secondary"] {
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+.hero-nav-overlay a:hover,
+.hero-nav-overlay button:hover {
+  color: rgba(255, 255, 255, 1) !important;
+}
+/* Utility icons (wishlist, cart, profile) turn black on hover */
+.hero-nav-overlay .nav-utility-icons a:hover,
+.hero-nav-overlay .nav-utility-icons button:hover {
+  color: #0a0a0a !important;
+}
+/* Nav dropdown has white background – use black text so subcategories are readable */
+.hero-nav-overlay .nav-category-dropdown,
+.hero-nav-overlay .nav-category-dropdown a,
+.hero-nav-overlay .nav-category-dropdown p,
+.hero-nav-overlay .nav-category-dropdown span {
+  color: #0a0a0a !important;
+}
+.hero-nav-overlay .nav-category-dropdown a:hover {
+  color: #000000 !important;
+}
+
+/* Lumina interactive list (hero slider) */
+.lumina-slider-wrapper {
+  --lumina-font-mono: var(--font-geist-mono), monospace;
+  --lumina-font-sans: var(--font-inter), sans-serif;
+  --lumina-color-bg: #0a0a0a;
+  --lumina-color-text: #ffffff;
+  --lumina-color-text-muted: rgba(255, 255, 255, 0.7);
+  --lumina-color-text-light: rgba(255, 255, 255, 0.5);
+  --lumina-color-accent: #d4af37;
+  --lumina-spacing-sm: 0.75rem;
+  --lumina-spacing-md: 1rem;
+
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 500px;
+  overflow: hidden;
+  background: var(--lumina-color-bg);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.lumina-slider-wrapper.loaded {
+  opacity: 1;
+}
+
+.lumina-webgl-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.lumina-slide-number,
+.lumina-slide-total {
+  position: absolute;
+  top: var(--lumina-spacing-md);
+  font-family: var(--lumina-font-mono);
+  font-size: clamp(10px, 1.2vw, 12px);
+  color: var(--lumina-color-text-light);
+  letter-spacing: 0.1em;
+  z-index: 10;
+}
+.lumina-slide-number {
+  right: calc(2 * var(--lumina-spacing-md) + 2ch);
+}
+.lumina-slide-total {
+  right: var(--lumina-spacing-md);
+}
+
+.lumina-slide-content {
+  position: absolute;
+  bottom: 15%;
+  left: var(--lumina-spacing-md);
+  right: 40%;
+  max-width: 42rem;
+  z-index: 10;
+  padding: var(--lumina-spacing-md);
+}
+
+.lumina-slide-title {
+  font-family: var(--lumina-font-sans);
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 700;
+  color: var(--lumina-color-text);
+  line-height: 1.1;
+  margin: 0 0 var(--lumina-spacing-sm);
+  letter-spacing: -0.02em;
+}
+
+.lumina-slide-description {
+  font-family: var(--lumina-font-sans);
+  font-size: clamp(0.95rem, 1.5vw, 1.1rem);
+  color: var(--lumina-color-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.lumina-slides-navigation {
+  position: absolute;
+  top: 50%;
+  right: var(--lumina-spacing-md);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumina-spacing-sm);
+  z-index: 10;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.lumina-slide-nav-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  padding: var(--lumina-spacing-sm) 0;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+.lumina-slide-nav-item:hover,
+.lumina-slide-nav-item.active {
+  opacity: 1;
+}
+
+.lumina-slide-progress-line {
+  width: 60px;
+  height: 2px;
+  background: var(--lumina-color-text-light);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.lumina-slide-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--lumina-color-accent);
+  border-radius: 1px;
+  transition: width 0.1s ease, opacity 0.3s ease;
+}
+
+.lumina-slide-nav-title {
+  font-family: var(--lumina-font-mono);
+  font-size: clamp(10px, 1vw, 11px);
+  color: var(--lumina-color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 @layer base {
