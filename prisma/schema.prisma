@@ -235,3 +235,26 @@ model Review {
   @@index([productId])
   @@index([userId])
 }
+
+// FAQs: managed from admin, shown on homepage (first 6) and /faq page
+model Faq {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  question     String
+  answer       String
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([displayOrder])
+}
+
+// Dynamic content editable from admin (top bar text, promo bar bg, etc.)
+model SiteSetting {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  key         String   @unique  // e.g. "top_bar_text", "promo_bar_bg_color"
+  value       String   @default("")
+  type        String   @default("text")  // "text" | "color" | "image_url" | "richtext"
+  description String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}

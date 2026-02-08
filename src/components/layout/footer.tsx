@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-12">
           <div className="md:col-span-1 space-y-4">
             <Link href="/" className="text-2xl font-bold tracking-tighter">
-              E-COM<span className="text-accent">.</span>
+              Make It Yours<span className="text-accent">.</span>
             </Link>
             <p className="text-primary-foreground/70 text-sm leading-relaxed">
               Trendy, high-quality fashion at affordable prices. Perfect for any occasion and style.
@@ -35,13 +35,13 @@ export default function Footer() {
             <ul className="space-y-2 text-sm text-primary-foreground/80">
               <li><Link href="#" className="hover:text-primary-foreground transition">Help</Link></li>
               <li><Link href="#" className="hover:text-primary-foreground transition">Shipping & Returns</Link></li>
-              <li><Link href="#" className="hover:text-primary-foreground transition">FAQ</Link></li>
+              <li><Link href="/faq" className="hover:text-primary-foreground transition">FAQ</Link></li>
             </ul>
           </div>
         </div>
         <div className="mt-12 pt-8 border-t border-primary-foreground/20 flex flex-col sm:flex-row justify-between items-center gap-4">
           <p className="text-sm text-primary-foreground/60">
-            © {new Date().getFullYear()} E-COM. All rights reserved.
+            © {new Date().getFullYear()} Make It Yours. All rights reserved.
           </p>
           <div className="flex items-center gap-6">
             <Link href="#" className="text-primary-foreground/60 hover:text-primary-foreground transition" aria-label="Instagram">

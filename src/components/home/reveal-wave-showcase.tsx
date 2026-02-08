@@ -14,20 +14,17 @@ const RevealWaveImage = dynamic(
   }
 );
 
-const CLOTH_IMAGES = [
-  {
-    src: "/images/Women/women_collection.jpg  ",
-    label: "Women",
-  },
-  {
-    src: "/images/Men/men_collection.avif",
-    label: "Men",
-  },
-  {
-    src: "/images/kids/kids_collection.avif",
-    label: "Kids",
-  },
+const DEFAULT_CARDS = [
+  { src: "/images/Women/women_collection.jpg", label: "Women" },
+  { src: "/images/Men/men_collection.avif", label: "Men" },
+  { src: "/images/kids/kids_collection.avif", label: "Kids" },
 ];
+
+export type RevealWaveShowcaseProps = {
+  heading?: string | null;
+  subtext?: string | null;
+  cards?: { src: string; label: string }[];
+};
 
 function ImageCard({ src, label }: { src: string; label: string }) {
   return (
@@ -56,21 +53,28 @@ function ImageCard({ src, label }: { src: string; label: string }) {
   );
 }
 
-export default function RevealWaveShowcase() {
+export default function RevealWaveShowcase({ heading, subtext, cards }: RevealWaveShowcaseProps) {
+  const title = (heading ?? "Shop by collection").trim() || "Shop by collection";
+  const description =
+    (subtext ?? "Explore our curated styles for Women, Men & Kids. Hover over each image to reveal the full look—premium quality, timeless pieces for every wardrobe.").trim() ||
+    "Explore our curated styles for Women, Men & Kids. Hover over each image to reveal the full look—premium quality, timeless pieces for every wardrobe.";
+  const items = Array.isArray(cards) && cards.length > 0 ? cards : DEFAULT_CARDS;
+  const filtered = items.filter((c) => c.src?.trim());
+
   return (
     <section className="py-16 px-4 sm:px-10">
       <div className="max-w-7xl mx-auto">
         <div className="text-center mb-10">
           <h2 className="text-2xl md:text-3xl font-bold text-primary tracking-tight mb-2">
-            Shop by collection
+            {title}
           </h2>
           <p className="text-secondary/80 text-sm md:text-base max-w-lg mx-auto">
-            Explore our curated styles for Women, Men & Kids. Hover over each image to reveal the full look—premium quality, timeless pieces for every wardrobe.
+            {description}
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {CLOTH_IMAGES.map((item) => (
-            <ImageCard key={item.label} src={item.src} label={item.label} />
+          {filtered.map((item, i) => (
+            <ImageCard key={`${item.label}-${i}`} src={item.src} label={item.label || `Card ${i + 1}`} />
           ))}
         </div>
         <div className="text-center mt-8">

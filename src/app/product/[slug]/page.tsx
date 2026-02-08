@@ -13,7 +13,7 @@ export async function generateMetadata({
     const product = await prisma.product.findUnique({ where: { slug } });
     return {
         title: product ? `${product.name} | Premium E-COM` : "Product Not Found",
-        description: product?.description || "High-quality fashion at E-COM.",
+        description: product?.description || "High-quality fashion at Make It Yours/",
     };
 }
 

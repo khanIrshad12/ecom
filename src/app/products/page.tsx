@@ -32,7 +32,7 @@ export async function generateMetadata({
         title = `${path.replace(/^\//, "").replace(/\//g, " / ")} Collection | E-COM`;
         descLabel = path.replace(/^\//, "") || descLabel;
     } else if (category) {
-        title = `${category} Collection | E-COM`;
+        title = `${category} Collection | Make It Yours`;
         descLabel = category;
     }
     return {

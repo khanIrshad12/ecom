@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { Instagram, Facebook, Twitter } from "lucide-react";
 
-export default function TopBar() {
+const DEFAULT_TOP_BAR_TEXT = "Free shipping on orders over ₹500";
+
+export default function TopBar({ topBarText }: { topBarText?: string | null }) {
+  const text = (topBarText ?? DEFAULT_TOP_BAR_TEXT).trim() || DEFAULT_TOP_BAR_TEXT;
   return (
     <div className="bg-primary text-primary-foreground text-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-9">
           <p className="font-medium">
-            Free shipping on orders over ₹500
+            {text}
           </p>
           <div className="flex items-center gap-4">
             <Link href="#" className="opacity-80 hover:opacity-100 transition" aria-label="Instagram">

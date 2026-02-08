@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSiteSettings } from "@/lib/site-settings";
 import { convertDriveLink } from "@/lib/utils-drive";
 import Image from "next/image";
 import FAQAccordion from "@/components/home/faq-accordion";
@@ -11,9 +12,10 @@ import { ProductCardImage } from "@/components/product/product-card-image";
 import RevealWaveShowcase from "@/components/home/reveal-wave-showcase";
 import { LuminaInteractiveList } from "@/components/ui/lumina-interactive-list";
 import { Shield, Sparkles, ImageIcon } from "lucide-react";
+import { SITE_SETTING_KEYS } from "@/lib/site-settings";
 
 export default async function HomePage() {
-  const [featuredProducts, rootCategories, allSubcategories] = await Promise.all([
+  const [featuredProducts, rootCategories, allSubcategories, siteSettings, faqsForHome] = await Promise.all([
     prisma.product.findMany({
       take: 8,
       include: { images: true, variants: true, category: true },
@@ -30,7 +32,48 @@ export default async function HomePage() {
       orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
       select: { id: true, name: true, slug: true, path: true, parentId: true, imageUrl: true, iconUrl: true },
     }),
+    getSiteSettings(),
+    prisma.faq.findMany({
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+      take: 7,
+      select: { id: true, question: true, answer: true },
+    }),
   ]);
+  const faqItems = faqsForHome.slice(0, 6).map((f) => ({ id: f.id, question: f.question, answer: f.answer }));
+  const showSeeAllFaqs = faqsForHome.length > 6;
+
+  const topBarText = siteSettings[SITE_SETTING_KEYS.TOP_BAR_TEXT];
+  const promoBarText = siteSettings[SITE_SETTING_KEYS.PROMO_BAR_TEXT]?.trim() || "New Arrivals • Free shipping on orders over ₹500 • Easy returns";
+  const promoBarBgColor = siteSettings[SITE_SETTING_KEYS.PROMO_BAR_BG_COLOR]?.trim();
+  const isValidHex = (v: string) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v.trim());
+  const promoSectionStyle = promoBarBgColor && isValidHex(promoBarBgColor) ? { backgroundColor: promoBarBgColor } : undefined;
+  const promoSectionClass = "text-primary-foreground py-3 px-4 sm:px-10" + (promoSectionStyle ? "" : " bg-primary");
+
+  // Shop by collection: local images only (no Drive/external URLs)
+  const isLocalPath = (s: string | undefined) => {
+    const v = (s ?? "").trim();
+    return v.startsWith("/") && !v.startsWith("//") && !/^https?:\/\//i.test(v) && !v.includes("drive.google.com");
+  };
+  const shopByCollectionCards = [
+    {
+      src: isLocalPath(siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_1])
+        ? (siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_1] ?? "").trim()
+        : "",
+      label: siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_LABEL_1]?.trim() || "Women",
+    },
+    {
+      src: isLocalPath(siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_2])
+        ? (siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_2] ?? "").trim()
+        : "",
+      label: siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_LABEL_2]?.trim() || "Men",
+    },
+    {
+      src: isLocalPath(siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_3])
+        ? (siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_IMAGE_3] ?? "").trim()
+        : "",
+      label: siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_LABEL_3]?.trim() || "Kids",
+    },
+  ].filter((c) => c.src);
 
   console.log("[HomePage] Root categories found:", rootCategories.length);
   console.log("[HomePage] Root categories:", rootCategories.map(c => ({ id: c.id, name: c.name, showInNav: (c as any).showInNav })));
@@ -53,18 +96,22 @@ export default async function HomePage() {
       {/* Hero with navbar overlaid (transparent); hides on scroll down, shows on scroll up */}
       <section className="relative w-full min-h-[100vh]">
         <LuminaInteractiveList />
-        <HeroNavOverlay />
+        <HeroNavOverlay topBarText={topBarText} />
       </section>
 
-      {/* Promo bar */}
-      <section className="bg-primary text-primary-foreground py-3 px-4 sm:px-10">
+      {/* Promo bar – text and bg color from admin (Site content) */}
+      <section className={promoSectionClass} style={promoSectionStyle}>
         <div className="max-w-7xl mx-auto text-center text-sm font-medium">
-          New Arrivals • Free shipping on orders over ₹500 • Easy returns
+          {promoBarText}
         </div>
       </section>
 
-      {/* Reveal Wave showcase – cloth images (Unsplash, CORS-friendly) */}
-      <RevealWaveShowcase />
+      {/* Reveal Wave showcase – Shop by collection (heading, subtext, 3 cards from admin; images: local path or Drive link) */}
+      <RevealWaveShowcase
+        heading={siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_HEADING]}
+        subtext={siteSettings[SITE_SETTING_KEYS.SHOP_BY_COLLECTION_SUBTEXT]}
+        cards={shopByCollectionCards.length > 0 ? shopByCollectionCards : undefined}
+      />
 
       {/* Product grid - clean cards with tabs */}
       <section className="py-16 px-4 sm:px-10">
@@ -128,27 +175,37 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Feature section - Explore Trendy Styles + 3 blocks */}
+      {/* Feature section - Explore Trendy (dynamic from admin) */}
       <section className="py-20 px-4 sm:px-10 bg-neutral/5">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div className="relative aspect-[4/5] max-h-[600px] overflow-hidden rounded-xl bg-neutral/10">
-              <Image
-                width="0"
-                height="0"
-                sizes="100vw"
-                src="/Images/Men/explore_trend.jpg"
-                alt="Fashion"
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20" />
+              {(() => {
+                const imgPath = siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_IMAGE]?.trim();
+                const useImg = imgPath && isLocalPath(imgPath);
+                const src = useImg ? imgPath : "/images/Men/explore_trend.jpg";
+                return (
+                  <>
+                    <Image
+                      width="0"
+                      height="0"
+                      sizes="100vw"
+                      src={src}
+                      alt="Fashion"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20" />
+                  </>
+                );
+              })()}
             </div>
             <div className="space-y-6">
               <h2 className="text-3xl md:text-4xl font-bold text-primary tracking-tight">
-                Explore Trendy Styles And Elevate Your Fashion Game!
+                {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_HEADING]?.trim() || "Explore Trendy Styles And Elevate Your Fashion Game!"}
               </h2>
               <p className="text-secondary leading-relaxed max-w-lg">
-                Discover curated collections that blend quality with affordability. From everyday essentials to statement pieces, find something that fits your vibe.
+                {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_SUBTEXT]?.trim() ||
+                  "Discover curated collections that blend quality with affordability. From everyday essentials to statement pieces, find something that fits your vibe."}
               </p>
               <Link href="/products">
                 <Button size="lg" className="h-12 px-8 font-semibold rounded-sm">
@@ -163,8 +220,12 @@ export default async function HomePage() {
                 <Shield className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h3 className="font-bold text-primary mb-1">Secure Shopping</h3>
-                <p className="text-secondary text-sm">Safe checkout and protected payments.</p>
+                <h3 className="font-bold text-primary mb-1">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD1_TITLE]?.trim() || "Secure Shopping"}
+                </h3>
+                <p className="text-secondary text-sm">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD1_DESC]?.trim() || "Safe checkout and protected payments."}
+                </p>
               </div>
             </div>
             <div className="flex gap-4 p-6 rounded-xl bg-background border border-neutral/10">
@@ -172,8 +233,12 @@ export default async function HomePage() {
                 <Sparkles className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h3 className="font-bold text-primary mb-1">Curated Picks</h3>
-                <p className="text-secondary text-sm">Personalized recommendations for you.</p>
+                <h3 className="font-bold text-primary mb-1">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD2_TITLE]?.trim() || "Curated Picks"}
+                </h3>
+                <p className="text-secondary text-sm">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD2_DESC]?.trim() || "Personalized recommendations for you."}
+                </p>
               </div>
             </div>
             <div className="flex gap-4 p-6 rounded-xl bg-background border border-neutral/10">
@@ -181,8 +246,12 @@ export default async function HomePage() {
                 <ImageIcon className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h3 className="font-bold text-primary mb-1">Quality Imagery</h3>
-                <p className="text-secondary text-sm">High-quality product photos and details.</p>
+                <h3 className="font-bold text-primary mb-1">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD3_TITLE]?.trim() || "Quality Imagery"}
+                </h3>
+                <p className="text-secondary text-sm">
+                  {siteSettings[SITE_SETTING_KEYS.EXPLORE_TRENDY_CARD3_DESC]?.trim() || "High-quality product photos and details."}
+                </p>
               </div>
             </div>
           </div>
@@ -270,46 +339,73 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* FAQ */}
+      {/* FAQ (dynamic from admin; first 6 on homepage, See all if >6) */}
       <section className="py-20 px-4 sm:px-10">
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12">
           <div className="space-y-4">
-            <h2 className="text-3xl font-bold text-primary tracking-tight">Frequently Asked Questions</h2>
-            <p className="text-secondary max-w-md">Quick answers to common questions about shipping, returns, and more.</p>
-            <Link href="/products">
-              <Button variant="outline" className="mt-4 rounded-sm">See all FAQs</Button>
-            </Link>
+            <h2 className="text-3xl font-bold text-primary tracking-tight">
+              {siteSettings[SITE_SETTING_KEYS.FAQ_HEADING]?.trim() || "Frequently Asked Questions"}
+            </h2>
+            <p className="text-secondary max-w-md">
+              {siteSettings[SITE_SETTING_KEYS.FAQ_SUBTEXT]?.trim() ||
+                "Quick answers to common questions about shipping, returns, and more."}
+            </p>
+            {showSeeAllFaqs && (
+              <Link href="/faq">
+                <Button variant="outline" className="mt-4 rounded-sm">See all FAQs</Button>
+              </Link>
+            )}
           </div>
           <div>
-            <FAQAccordion />
+            <FAQAccordion items={faqItems.length > 0 ? faqItems : undefined} />
           </div>
         </div>
       </section>
 
-      {/* Exclusive CTA */}
+      {/* Exclusive CTA (dynamic from admin) */}
       <section className="py-20 px-4 sm:px-10 bg-primary text-primary-foreground">
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Shop Now For Exclusive Styles!</h2>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+              {siteSettings[SITE_SETTING_KEYS.EXCLUSIVE_CTA_HEADING]?.trim() || "Shop Now For Exclusive Styles!"}
+            </h2>
             <p className="text-primary-foreground/80 max-w-lg leading-relaxed">
-              Discover our latest collection. Quality fabrics, on-trend designs, and prices that don&apos;t break the bank.
+              {siteSettings[SITE_SETTING_KEYS.EXCLUSIVE_CTA_SUBTEXT]?.trim() ||
+                "Discover our latest collection. Quality fabrics, on-trend designs, and prices that don't break the bank."}
             </p>
-            <Link href="/products">
+            <Link
+              href={
+                (() => {
+                  const raw = siteSettings[SITE_SETTING_KEYS.EXCLUSIVE_CTA_BTN_LINK]?.trim();
+                  if (raw && (raw.startsWith("/") || raw.startsWith("http"))) return raw;
+                  return "/products";
+                })()
+              }
+            >
               <Button size="lg" className="bg-white text-primary hover:bg-white/90 h-12 px-8 font-semibold rounded-sm">
-                Shop Now
+                {siteSettings[SITE_SETTING_KEYS.EXCLUSIVE_CTA_BTN_TEXT]?.trim() || "Shop Now"}
               </Button>
             </Link>
           </div>
           <div className="relative aspect-[4/5] max-h-[500px] overflow-hidden rounded-xl">
-            <Image
-              width="0"
-              height="0"
-              sizes="100vw"
-              src="/Images/Women/exclusive_style.jpg"
-              alt="Exclusive styles"
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+            {(() => {
+              const imgPath = siteSettings[SITE_SETTING_KEYS.EXCLUSIVE_CTA_IMAGE]?.trim();
+              const useImg = imgPath && isLocalPath(imgPath);
+              const src = useImg ? imgPath : "/images/Women/exclusive_style.jpg";
+              return (
+                <>
+                  <Image
+                    width="0"
+                    height="0"
+                    sizes="100vw"
+                    src={src}
+                    alt="Exclusive styles"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+                </>
+              );
+            })()}
           </div>
         </div>
       </section>

@@ -7,7 +7,7 @@ import Navbar from "@/components/layout/navbar";
 const SCROLL_THRESHOLD = 10;
 const SCROLL_TOP_MAX = 80;
 
-export default function HeroNavOverlay() {
+export default function HeroNavOverlay({ topBarText }: { topBarText?: string | null }) {
   const [hidden, setHidden] = useState(false);
   const lastScrollY = useRef(0);
 
@@ -34,7 +34,7 @@ export default function HeroNavOverlay() {
         hidden ? "-translate-y-full" : "translate-y-0"
       }`}
     >
-      <TopBar />
+      <TopBar topBarText={topBarText} />
       <Navbar />
     </div>
   );

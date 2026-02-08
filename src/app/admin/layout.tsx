@@ -26,6 +26,12 @@ export default function AdminLayout({
                     <Link href="/admin/orders" className="p-2 hover:bg-neutral/10 rounded transition">
                         Orders
                     </Link>
+                    <Link href="/admin/settings" className="p-2 hover:bg-neutral/10 rounded transition">
+                        Site content
+                    </Link>
+                    <Link href="/admin/faqs" className="p-2 hover:bg-neutral/10 rounded transition">
+                        FAQs
+                    </Link>
                 </nav>
             </aside>
 
